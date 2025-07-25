@@ -1,13 +1,12 @@
-mod state;
 mod events;
+mod state;
 
-pub use state::AppState;
 pub use events::WalletEvent;
+pub use state::AppState;
 
 use anyhow::Result;
 // Temporarily comment out GPUI imports
-// use gpui::*;
-// use crate::ui::MainWindow;
+use gpui::*;
 
 pub struct SolanaWalletApp {
     state: AppState,

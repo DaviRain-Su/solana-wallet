@@ -1,23 +1,8 @@
-// use gpui::*;
+use chrono::{DateTime, Utc};
+use gpui::*;
+use solana_sdk::pubkey::Pubkey;
 use std::collections::VecDeque;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
-// use solana_sdk::pubkey::Pubkey;
-
-// 临时定义 Pubkey 类型
-#[derive(Clone, Debug, PartialEq)]
-pub struct Pubkey([u8; 32]);
-
-impl Pubkey {
-    pub fn new_unique() -> Self {
-        let mut bytes = [0u8; 32];
-        // 简单的随机生成
-        for i in 0..32 {
-            bytes[i] = (uuid::Uuid::new_v4().as_bytes()[i % 16]) as u8;
-        }
-        Self(bytes)
-    }
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum SolanaNetwork {
@@ -103,7 +88,7 @@ impl AppState {
             timestamp: Utc::now(),
         };
         self.notifications.push_back(notification);
-        
+
         // Keep only last 10 notifications
         while self.notifications.len() > 10 {
             self.notifications.pop_front();
