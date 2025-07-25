@@ -6005,6 +6005,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "qrcode"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d68782463e408eb1e668cf6152704bd856c78c5b6417adaee3203d8f4c1fc9ec"
+dependencies = [
+ "image",
+]
+
+[[package]]
 name = "qstring"
 version = "0.7.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9554,6 +9563,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "mockito",
+ "qrcode",
  "rand 0.8.5",
  "serde",
  "serde_json",
