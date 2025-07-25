@@ -1,6 +1,6 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::v_flex;
 use std::sync::Arc;
 mod app;
@@ -95,17 +95,24 @@ fn is_password_field(field: ImportField) -> bool {
 }
 
 impl MainWindow {
-    fn wrap_button_with_theme(&self, button: Button, is_primary: bool) -> impl IntoElement {
-        // 为按钮添加一个包装器来控制文本颜色
-        let text_color = if is_primary {
-            rgb(0xffffff) // 主按钮始终使用白色文字
+    fn wrap_button_with_theme(&self, button: Button, is_primary: bool, cx: &App) -> Button {
+        // 根据当前主题和按钮类型创建自定义样式
+        if is_primary {
+            // 主按钮保持原样
+            button
         } else if self.theme.mode == ThemeMode::Light {
-            rgb(0x1a1a1a) // 浅色主题使用深色文字
+            // 浅色主题下的 ghost 按钮需要深色文字
+            let custom_style = ButtonCustomVariant::new(cx)
+                .foreground(rgb(0x1a1a1a).into()) // 深色文字
+                .color(rgb(0xf0f0f0).into()) // 浅灰背景
+                .hover(rgb(0xe0e0e0).into()) // hover 时的背景
+                .active(rgb(0xd0d0d0).into()) // 点击时的背景
+                .border(self.theme.border.into());
+            button.custom(custom_style)
         } else {
-            rgb(0xffffff) // 深色主题使用白色文字
-        };
-
-        div().text_color(text_color).child(button)
+            // 深色主题保持原样
+            button
+        }
     }
 
     fn process_import_wallet(&mut self, cx: &mut Context<Self>) {
@@ -848,6 +855,7 @@ impl Render for MainWindow {
                                     this.toggle_theme(cx);
                                 })),
                             false,
+                            cx,
                         ),
                     ),
             )
@@ -1103,6 +1111,7 @@ impl MainWindow {
                                             }),
                                         ),
                                         false,
+                                        cx,
                                     ))
                                     .child(self.wrap_button_with_theme(
                                         Button::new("apply-rpc").label("应用").primary().on_click(
@@ -1111,6 +1120,7 @@ impl MainWindow {
                                             }),
                                         ),
                                         true,
+                                        cx,
                                     )),
                             ),
                     ),
@@ -1161,6 +1171,7 @@ impl MainWindow {
                                     cx.notify();
                                 })),
                             true,
+                            cx,
                         ),
                     )
                     .child(
@@ -1173,6 +1184,7 @@ impl MainWindow {
                                     cx.notify();
                                 })),
                             false,
+                            cx,
                         ),
                     ),
             )
@@ -1246,6 +1258,7 @@ impl MainWindow {
                                     cx.notify();
                                 })),
                             false,
+                            cx,
                         ),
                     )
                     .child(
@@ -1265,6 +1278,7 @@ impl MainWindow {
                                     }
                                 })),
                             true,
+                            cx,
                         ),
                     ),
             )
@@ -1334,6 +1348,7 @@ impl MainWindow {
                             this.save_wallet(cx);
                         })),
                     true,
+                    cx,
                 ),
             )
     }
@@ -1383,6 +1398,7 @@ impl MainWindow {
                                     cx.notify();
                                 })),
                             self.import_type == ImportType::Mnemonic,
+                            cx,
                         ),
                     )
                     .child(
@@ -1399,6 +1415,7 @@ impl MainWindow {
                                     cx.notify();
                                 })),
                             self.import_type == ImportType::PrivateKey,
+                            cx,
                         ),
                     ),
             )
@@ -1555,6 +1572,7 @@ impl MainWindow {
                                     cx.notify();
                                 })),
                             false,
+                            cx,
                         ),
                     )
                     .child(
@@ -1565,6 +1583,7 @@ impl MainWindow {
                                 }),
                             ),
                             true,
+                            cx,
                         ),
                     ),
             )
@@ -1626,6 +1645,7 @@ impl MainWindow {
                                                 }))
                                         },
                                         self.current_network == SolanaNetwork::Mainnet,
+                                        cx,
                                     ))
                                     .child(self.wrap_button_with_theme(
                                         if self.current_network == SolanaNetwork::Devnet {
@@ -1644,6 +1664,7 @@ impl MainWindow {
                                                 }))
                                         },
                                         self.current_network == SolanaNetwork::Devnet,
+                                        cx,
                                     ))
                                     .child(self.wrap_button_with_theme(
                                         if self.current_network == SolanaNetwork::Testnet {
@@ -1662,6 +1683,7 @@ impl MainWindow {
                                                 }))
                                         },
                                         self.current_network == SolanaNetwork::Testnet,
+                                        cx,
                                     ))
                                     .child(self.wrap_button_with_theme(
                                         Button::new("rpc-config").label("⚙️").ghost().on_click(
@@ -1670,6 +1692,7 @@ impl MainWindow {
                                             }),
                                         ),
                                         false,
+                                        cx,
                                     )),
                             ),
                     ),
@@ -1707,6 +1730,7 @@ impl MainWindow {
                                             println!("复制地址");
                                         })),
                                     false,
+                                    cx,
                                 ),
                             ),
                     )
@@ -1792,6 +1816,7 @@ impl MainWindow {
                                     }
                                 })),
                             true,
+                            cx,
                         ),
                     )
                     .child(
@@ -1803,6 +1828,7 @@ impl MainWindow {
                                     println!("接收功能待实现");
                                 })),
                             false,
+                            cx,
                         ),
                     )
                     .child(
@@ -1817,6 +1843,7 @@ impl MainWindow {
                                     }
                                 })),
                             false,
+                            cx,
                         ),
                     )
                     .child(if self.current_network != SolanaNetwork::Mainnet {
@@ -1834,6 +1861,7 @@ impl MainWindow {
                                     }
                                 })),
                             false,
+                            cx,
                         )
                     } else {
                         self.wrap_button_with_theme(
@@ -1842,6 +1870,7 @@ impl MainWindow {
                                 .ghost()
                                 .on_click(cx.listener(|_, _, _window, _cx| {})),
                             false,
+                            cx,
                         )
                     }),
             )
@@ -1921,6 +1950,7 @@ impl MainWindow {
                                     }
                                 })),
                             false,
+                            cx,
                         ),
                     ),
             )
@@ -2112,6 +2142,7 @@ impl MainWindow {
                                 }
                             })),
                         true,
+                        cx,
                     ),
                 ),
             )
