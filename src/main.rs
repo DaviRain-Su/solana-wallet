@@ -98,6 +98,7 @@ struct MainWindow {
     send_amount: SharedString,
     send_error: Option<String>,
     sending_transaction: bool,
+    pending_transaction: Option<std::sync::mpsc::Receiver<Result<(solana_sdk::signature::Signature, solana_sdk::pubkey::Pubkey, solana_sdk::pubkey::Pubkey, u64), String>>>,
     // 焦点处理
     focus_handle: FocusHandle,
     rpc_focused: bool,
@@ -344,8 +345,13 @@ impl MainWindow {
                     cx.notify();
                 }),
             )
+            .overflow_hidden()
             .child(
                 div()
+                    .flex_shrink()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
                     .text_color(if value.is_empty() {
                         self.theme.text_disabled
                     } else {
@@ -399,8 +405,13 @@ impl MainWindow {
                     cx.notify();
                 }),
             )
+            .overflow_hidden()
             .child(
                 div()
+                    .flex_shrink()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
                     .text_color(if value.is_empty() {
                         self.theme.text_disabled
                     } else {
@@ -506,7 +517,7 @@ impl MainWindow {
                         
                         // For amount field, only allow numbers and decimal point
                         if field == InputField::SendAmount {
-                            if c.is_numeric() || (c == '.' && !field_value.contains('.')) {
+                            if c.is_numeric() || (c == '.' && !field_value.to_string().contains('.')) {
                                 let mut val = field_value.to_string();
                                 val.push(c);
                                 *field_value = val.into();
@@ -681,6 +692,7 @@ impl MainWindow {
             send_amount: SharedString::default(),
             send_error: None,
             sending_transaction: false,
+            pending_transaction: None,
             focus_handle,
             rpc_focused: false,
             balance_update_timer: None,
@@ -953,6 +965,44 @@ impl MainWindow {
             }
         }
     }
+    
+    fn check_transaction_update(&mut self, cx: &mut Context<Self>) {
+        if let Some(rx) = &self.pending_transaction {
+            if let Ok(result) = rx.try_recv() {
+                self.pending_transaction = None;
+                self.sending_transaction = false;
+                
+                match result {
+                    Ok((signature, from_pubkey, to_pubkey, lamports)) => {
+                        // 添加交易记录
+                        let mut tx_record = TransactionRecord::new(
+                            signature,
+                            from_pubkey,
+                            Some(to_pubkey),
+                            lamports,
+                            5000, // 估算的手续费
+                        );
+                        tx_record.status = TransactionStatus::Confirmed;
+                        self.transaction_history.insert(0, tx_record);
+                        
+                        // 返回仪表板
+                        if let ViewState::SendTransaction { account_index } = self.view_state {
+                            self.view_state = ViewState::Dashboard { account_index };
+                            // 清空输入
+                            self.send_to_address = SharedString::default();
+                            self.send_amount = SharedString::default();
+                            // 刷新余额
+                            self.fetch_balance(account_index, cx);
+                        }
+                    }
+                    Err(error) => {
+                        self.send_error = Some(error);
+                    }
+                }
+                cx.notify();
+            }
+        }
+    }
 }
 
 impl Focusable for MainWindow {
@@ -968,6 +1018,8 @@ impl Render for MainWindow {
 
         // 检查余额更新
         self.check_balance_update(cx);
+        // 检查交易更新
+        self.check_transaction_update(cx);
 
         div()
             .flex()
@@ -1097,15 +1149,23 @@ impl MainWindow {
                     cx.notify();
                 }),
             )
+            .overflow_hidden()
             .child(
                 div()
                     .flex_1()
+                    .min_w_0()
+                    .overflow_hidden()
+                    .text_ellipsis()
                     .text_color(if self.custom_rpc_url.is_empty() {
                         self.theme.text_disabled
                     } else {
                         self.theme.text_primary
                     })
-                    .child(display_text),
+                    .child(if self.rpc_focused {
+                        format!("{}_", display_text)
+                    } else {
+                        display_text.to_string()
+                    }),
             )
             .when(self.rpc_focused && !self.custom_rpc_url.is_empty(), |el| {
                 el.child(
@@ -2496,10 +2556,14 @@ impl MainWindow {
                     let lamports = (amount * 1_000_000_000.0) as u64;
                     let keypair_clone = keypair.inner().insecure_clone();
 
+                    // 创建通道来接收结果
+                    let (tx, rx) = std::sync::mpsc::channel();
+                    self.pending_transaction = Some(rx);
+                    
                     // 在后台线程中执行异步任务
                     std::thread::spawn(move || {
                         let rt = tokio::runtime::Runtime::new().unwrap();
-                        rt.block_on(async {
+                        let result = rt.block_on(async {
                             use wallet::TransactionHelper;
                             
                             match TransactionHelper::create_transfer_sol(
@@ -2513,40 +2577,24 @@ impl MainWindow {
                                     match rpc_manager.send_transaction(&transaction).await {
                                         Ok(signature) => {
                                             println!("交易成功! 签名: {}", signature);
-                                            // 添加交易记录
-                                            let mut tx_record = TransactionRecord::new(
-                                                signature,
-                                                from_pubkey,
-                                                Some(to_pubkey),
-                                                lamports,
-                                                5000, // 估算的手续费
-                                            );
-                                            tx_record.status = TransactionStatus::Confirmed;
-                                            
-                                            // 注意：实际应用中应该通过消息传递更新UI
-                                            // 这里简化处理，只打印结果
-                                            println!("交易已添加到历史记录");
+                                            Ok((signature, from_pubkey, to_pubkey, lamports))
                                         }
                                         Err(e) => {
                                             println!("发送交易失败: {}", e);
+                                            Err(format!("发送失败: {}", e))
                                         }
                                     }
                                 }
                                 Err(e) => {
                                     println!("创建交易失败: {}", e);
+                                    Err(format!("创建交易失败: {}", e))
                                 }
                             }
                         });
+                        
+                        // 发送结果
+                        let _ = tx.send(result);
                     });
-                    
-                    // 暂时简化处理，假设交易会成功
-                    // 实际应用中应该通过消息通道接收结果
-                    self.sending_transaction = false;
-                    self.view_state = ViewState::Dashboard { account_index };
-                    self.send_to_address = SharedString::default();
-                    self.send_amount = SharedString::default();
-                    self.fetch_balance(account_index, cx);
-                    cx.notify();
                 } else {
                     self.send_error = Some("当前账户没有私钥，无法发送交易".to_string());
                     self.sending_transaction = false;
