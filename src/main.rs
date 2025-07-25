@@ -21,6 +21,7 @@ enum ViewState {
     },
     ImportWallet,
     Dashboard { account_index: usize },
+    SendTransaction { account_index: usize },
 }
 
 #[derive(Clone, PartialEq)]
@@ -44,9 +45,90 @@ struct MainWindow {
     show_network_selector: bool,
     requesting_airdrop: bool,
     pending_balance_update: Option<std::sync::mpsc::Receiver<Result<f64, anyhow::Error>>>,
+    // 导入钱包相关字段
+    import_mnemonic: SharedString,
+    import_wallet_name: SharedString,
+    import_password: SharedString,
+    import_confirm_password: SharedString,
+    import_error: Option<String>,
+    // 发送交易相关字段
+    send_to_address: SharedString,
+    send_amount: SharedString,
+    send_error: Option<String>,
+    sending_transaction: bool,
 }
 
 impl MainWindow {
+    fn process_import_wallet(&mut self, cx: &mut Context<Self>) {
+        // 为了演示，使用预设的测试数据
+        let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let test_wallet_name = "导入的钱包";
+        let test_password = "password123";
+        
+        // 清空错误
+        self.import_error = None;
+        
+        // 验证助记词
+        match MnemonicPhrase::from_phrase(test_mnemonic) {
+            Ok(mnemonic) => {
+                if let Some(ref storage) = self.storage {
+                    // 创建钱包数据
+                    let mut wallet_data = WalletData {
+                        mnemonic: mnemonic.phrase(),
+                        accounts: vec![],
+                        created_at: chrono::Utc::now(),
+                        modified_at: chrono::Utc::now(),
+                    };
+                    
+                    // 派生第一个账户
+                    match mnemonic.derive_keypair(0) {
+                        Ok(derived) => {
+                            let account_data = AccountData {
+                                name: "导入账户 1".to_string(),
+                                derivation_path: derived.derivation_path.clone(),
+                                pubkey: derived.keypair.pubkey().to_string(),
+                            };
+                            wallet_data.accounts.push(account_data);
+                            
+                            // 保存钱包
+                            match storage.save_wallet(test_wallet_name, &wallet_data, test_password) {
+                                Ok(_) => {
+                                    // 创建内存中的账户
+                                    let account = WalletAccount::with_derivation_path(
+                                        "导入账户 1".to_string(),
+                                        derived.keypair,
+                                        derived.derivation_path,
+                                    );
+                                    self.accounts.push(account);
+                                    
+                                    // 跳转到仪表板
+                                    self.view_state = ViewState::Dashboard { account_index: 0 };
+                                    self.fetch_balance(0, cx);
+                                    cx.notify();
+                                }
+                                Err(e) => {
+                                    self.import_error = Some(format!("保存钱包失败: {}", e));
+                                    cx.notify();
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.import_error = Some(format!("派生密钥失败: {}", e));
+                            cx.notify();
+                        }
+                    }
+                } else {
+                    self.import_error = Some("存储未初始化".to_string());
+                    cx.notify();
+                }
+            }
+            Err(e) => {
+                self.import_error = Some(format!("无效的助记词: {}", e));
+                cx.notify();
+            }
+        }
+    }
+    
     fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         println!("Creating MainWindow...");
         
@@ -76,6 +158,15 @@ impl MainWindow {
             show_network_selector: false,
             requesting_airdrop: false,
             pending_balance_update: None,
+            import_mnemonic: SharedString::default(),
+            import_wallet_name: SharedString::default(),
+            import_password: SharedString::default(),
+            import_confirm_password: SharedString::default(),
+            import_error: None,
+            send_to_address: SharedString::default(),
+            send_amount: SharedString::default(),
+            send_error: None,
+            sending_transaction: false,
         }
     }
 
@@ -363,6 +454,13 @@ impl Render for MainWindow {
                                     div().size_full().child(self.render_welcome_content(cx))
                                 }
                             }
+                            ViewState::SendTransaction { account_index } => {
+                                if let Some(account) = self.accounts.get(*account_index) {
+                                    div().size_full().child(self.render_send_transaction_content(account, cx))
+                                } else {
+                                    div().size_full().child(self.render_welcome_content(cx))
+                                }
+                            }
                         }
                     )
             )
@@ -586,7 +684,8 @@ impl MainWindow {
             .size_full()
             .items_center()
             .justify_center()
-            .gap_4()
+            .gap_6()
+            .p(px(20.0))
             .child(
                 div()
                     .text_2xl()
@@ -596,16 +695,175 @@ impl MainWindow {
             .child(
                 div()
                     .text_color(self.theme.text_secondary)
-                    .child("功能开发中...")
+                    .text_center()
+                    .max_w(px(500.0))
+                    .child("请输入您的12个或24个助记词，用空格分隔")
             )
             .child(
-                Button::new("back")
-                    .label("返回")
-                    .ghost()
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        this.view_state = ViewState::Welcome;
-                        cx.notify();
-                    }))
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .w_full()
+                    .max_w(px(500.0))
+                    .child(
+                        // 助记词输入框
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("助记词")
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(100.0))
+                                    .p(px(12.0))
+                                    .bg(self.theme.surface)
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(self.theme.border)
+                                    .child(
+                                        div()
+                                            .text_color(self.theme.text_primary)
+                                            .child(self.import_mnemonic.to_string())
+                                    )
+                            )
+                    )
+                    .child(
+                        // 钱包名称输入框
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("钱包名称")
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(40.0))
+                                    .px(px(12.0))
+                                    .bg(self.theme.surface)
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(self.theme.border)
+                                    .flex()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_color(self.theme.text_primary)
+                                            .child(self.import_wallet_name.to_string())
+                                    )
+                            )
+                    )
+                    .child(
+                        // 密码输入框
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("密码")
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(40.0))
+                                    .px(px(12.0))
+                                    .bg(self.theme.surface)
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(self.theme.border)
+                                    .flex()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_color(self.theme.text_primary)
+                                            .child("••••••••")
+                                    )
+                            )
+                    )
+                    .child(
+                        // 确认密码输入框
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("确认密码")
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(40.0))
+                                    .px(px(12.0))
+                                    .bg(self.theme.surface)
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(self.theme.border)
+                                    .flex()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_color(self.theme.text_primary)
+                                            .child("••••••••")
+                                    )
+                            )
+                    )
+            )
+            .child(
+                // 错误提示
+                if let Some(error) = &self.import_error {
+                    div()
+                        .text_sm()
+                        .text_color(self.theme.error)
+                        .child(error.clone())
+                } else {
+                    div()
+                }
+            )
+            .child(
+                // 按钮组
+                div()
+                    .flex()
+                    .gap_4()
+                    .child(
+                        Button::new("back")
+                            .label("返回")
+                            .ghost()
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                // 清空输入
+                                this.import_mnemonic = SharedString::default();
+                                this.import_wallet_name = SharedString::default();
+                                this.import_password = SharedString::default();
+                                this.import_confirm_password = SharedString::default();
+                                this.import_error = None;
+                                this.view_state = ViewState::Welcome;
+                                cx.notify();
+                            }))
+                    )
+                    .child(
+                        Button::new("import")
+                            .label("导入钱包")
+                            .primary()
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                this.process_import_wallet(cx);
+                            }))
+                    )
             )
     }
 
@@ -805,8 +1063,11 @@ impl MainWindow {
                         Button::new("send")
                             .label("发送")
                             .primary()
-                            .on_click(cx.listener(|_, _, _window, _cx| {
-                                println!("发送功能待实现");
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                if let ViewState::Dashboard { account_index } = this.view_state {
+                                    this.view_state = ViewState::SendTransaction { account_index };
+                                    cx.notify();
+                                }
                             }))
                     )
                     .child(
@@ -877,6 +1138,265 @@ impl MainWindow {
                             )
                     )
             )
+    }
+    
+    fn render_send_transaction_content(&self, account: &WalletAccount, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .p(px(20.0))
+            .gap_6()
+            .child(
+                // 头部
+                div()
+                    .flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_2xl()
+                            .text_color(self.theme.text_primary)
+                            .child("发送 SOL")
+                    )
+                    .child(
+                        Button::new("back-to-dashboard")
+                            .label("返回")
+                            .ghost()
+                            .on_click(cx.listener(move |this, _, _window, cx| {
+                                if let ViewState::SendTransaction { account_index } = this.view_state {
+                                    this.view_state = ViewState::Dashboard { account_index };
+                                    // 清空输入
+                                    this.send_to_address = SharedString::default();
+                                    this.send_amount = SharedString::default();
+                                    this.send_error = None;
+                                    cx.notify();
+                                }
+                            }))
+                    )
+            )
+            .child(
+                // 发送表单
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_4()
+                    .w_full()
+                    .max_w(px(500.0))
+                    .child(
+                        // 从地址（只读）
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("从地址")
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(40.0))
+                                    .px(px(12.0))
+                                    .bg(self.theme.surface)
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(self.theme.border)
+                                    .flex()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(self.theme.text_disabled)
+                                            .truncate()
+                                            .child(account.pubkey.to_string())
+                                    )
+                            )
+                    )
+                    .child(
+                        // 余额显示
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("可用余额")
+                            )
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .text_color(self.theme.text_primary)
+                                    .child(
+                                        if let Some(balance) = self.balance {
+                                            format!("{:.6} SOL", balance)
+                                        } else {
+                                            "0.000000 SOL".to_string()
+                                        }
+                                    )
+                            )
+                    )
+                    .child(
+                        // 目标地址输入
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("接收地址")
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(40.0))
+                                    .px(px(12.0))
+                                    .bg(self.theme.surface)
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(self.theme.border)
+                                    .flex()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .text_color(self.theme.text_primary)
+                                            .child(
+                                                if self.send_to_address.is_empty() {
+                                                    "输入接收地址...".to_string()
+                                                } else {
+                                                    self.send_to_address.to_string()
+                                                }
+                                            )
+                                    )
+                            )
+                    )
+                    .child(
+                        // 金额输入
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("发送金额")
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .h(px(40.0))
+                                    .px(px(12.0))
+                                    .bg(self.theme.surface)
+                                    .rounded(px(8.0))
+                                    .border_1()
+                                    .border_color(self.theme.border)
+                                    .flex()
+                                    .items_center()
+                                    .justify_between()
+                                    .child(
+                                        div()
+                                            .text_color(self.theme.text_primary)
+                                            .child(
+                                                if self.send_amount.is_empty() {
+                                                    "0.00".to_string()
+                                                } else {
+                                                    self.send_amount.to_string()
+                                                }
+                                            )
+                                    )
+                                    .child(
+                                        div()
+                                            .text_color(self.theme.text_secondary)
+                                            .child("SOL")
+                                    )
+                            )
+                    )
+                    .child(
+                        // 预估费用
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("预估网络费用")
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_primary)
+                                    .child("~0.000005 SOL")
+                            )
+                    )
+            )
+            .child(
+                // 错误提示
+                if let Some(error) = &self.send_error {
+                    div()
+                        .text_sm()
+                        .text_color(self.theme.error)
+                        .child(error.clone())
+                } else {
+                    div()
+                }
+            )
+            .child(
+                // 发送按钮
+                div()
+                    .flex()
+                    .justify_center()
+                    .w_full()
+                    .child(
+                        Button::new("confirm-send")
+                            .label(if self.sending_transaction { "发送中..." } else { "确认发送" })
+                            .primary()
+                            .on_click(cx.listener(|this, _, _window, cx| {
+                                if !this.sending_transaction {
+                                    this.process_send_transaction(cx);
+                                }
+                            }))
+                    )
+            )
+    }
+    
+    fn process_send_transaction(&mut self, cx: &mut Context<Self>) {
+        // 为了演示，使用预设的测试数据
+        let test_recipient = "11111111111111111111111111111111"; // 系统程序地址
+        let test_amount = 0.001; // 发送 0.001 SOL
+        
+        self.send_error = None;
+        self.sending_transaction = true;
+        cx.notify();
+        
+        // 模拟发送交易
+        println!("模拟发送 {} SOL 到 {}", test_amount, test_recipient);
+        
+        // 设置一个简单的延迟来模拟交易处理
+        std::thread::spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        });
+        
+        // 立即返回仪表板（实际应该等待交易确认）
+        if let ViewState::SendTransaction { account_index } = self.view_state {
+            self.view_state = ViewState::Dashboard { account_index };
+            self.sending_transaction = false;
+            // 清空输入
+            self.send_to_address = SharedString::default();
+            self.send_amount = SharedString::default();
+            // 刷新余额
+            self.fetch_balance(account_index, cx);
+            cx.notify();
+        }
     }
 }
 
