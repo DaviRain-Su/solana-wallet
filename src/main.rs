@@ -4,6 +4,7 @@ use gpui_component::button::{Button, ButtonCustomVariant, ButtonVariants};
 use gpui_component::{v_flex, Icon, IconName, Sizable};
 use gpui::Timer;
 use std::sync::Arc;
+use std::str::FromStr;
 use std::time::Duration;
 mod app;
 mod theme;
@@ -2307,32 +2308,121 @@ impl MainWindow {
     }
 
     fn process_send_transaction(&mut self, cx: &mut Context<Self>) {
-        // 为了演示，使用预设的测试数据
-        let test_recipient = "11111111111111111111111111111111"; // 系统程序地址
-        let test_amount = 0.001; // 发送 0.001 SOL
+        // 验证输入
+        if self.send_to_address.is_empty() {
+            self.send_error = Some("请输入接收地址".to_string());
+            cx.notify();
+            return;
+        }
+
+        if self.send_amount.is_empty() {
+            self.send_error = Some("请输入发送金额".to_string());
+            cx.notify();
+            return;
+        }
+
+        // 验证地址格式
+        let recipient_address = self.send_to_address.to_string();
+        if let Err(_) = solana_sdk::pubkey::Pubkey::from_str(&recipient_address) {
+            self.send_error = Some("无效的地址格式".to_string());
+            cx.notify();
+            return;
+        }
+
+        // 验证金额
+        let amount: f64 = match self.send_amount.parse() {
+            Ok(amt) if amt > 0.0 => amt,
+            _ => {
+                self.send_error = Some("请输入有效的金额".to_string());
+                cx.notify();
+                return;
+            }
+        };
+
+        // 检查余额是否足够
+        if let Some(balance) = self.balance {
+            if amount > balance {
+                self.send_error = Some(format!("余额不足。可用: {:.6} SOL", balance));
+                cx.notify();
+                return;
+            }
+        }
 
         self.send_error = None;
         self.sending_transaction = true;
         cx.notify();
 
-        // 模拟发送交易
-        println!("模拟发送 {} SOL 到 {}", test_amount, test_recipient);
-
-        // 设置一个简单的延迟来模拟交易处理
-        std::thread::spawn(|| {
-            std::thread::sleep(std::time::Duration::from_secs(2));
-        });
-
-        // 立即返回仪表板（实际应该等待交易确认）
+        // 获取当前账户
         if let ViewState::SendTransaction { account_index } = self.view_state {
-            self.view_state = ViewState::Dashboard { account_index };
-            self.sending_transaction = false;
-            // 清空输入
-            self.send_to_address = SharedString::default();
-            self.send_amount = SharedString::default();
-            // 刷新余额
-            self.fetch_balance(account_index, cx);
-            cx.notify();
+            if let Some(account) = self.accounts.get(account_index) {
+                if let Some(keypair) = &account.keypair {
+                    // 准备发送真实交易
+                    let rpc_manager = self.rpc_manager.clone();
+                    let from_pubkey = keypair.pubkey();
+                    let to_pubkey = solana_sdk::pubkey::Pubkey::from_str(&recipient_address).unwrap();
+                    let lamports = (amount * 1_000_000_000.0) as u64;
+                    let keypair_bytes = keypair.to_bytes();
+
+                    // 异步发送交易
+                    cx.spawn(|this, mut cx| async move {
+                        use wallet::TransactionHelper;
+                        
+                        match TransactionHelper::create_transfer_sol(
+                            &rpc_manager,
+                            &from_pubkey,
+                            &to_pubkey,
+                            lamports,
+                        ).await {
+                            Ok(mut transaction) => {
+                                // 签名交易
+                                let keypair = solana_sdk::signature::Keypair::from_bytes(&keypair_bytes).unwrap();
+                                transaction.sign(&[&keypair], transaction.message.recent_blockhash);
+                                
+                                // 发送交易
+                                match rpc_manager.send_transaction(&transaction).await {
+                                    Ok(signature) => {
+                                        println!("交易成功! 签名: {}", signature);
+                                        
+                                        this.update(&mut cx, |this, cx| {
+                                            this.sending_transaction = false;
+                                            // 返回仪表板
+                                            this.view_state = ViewState::Dashboard { account_index };
+                                            // 清空输入
+                                            this.send_to_address = SharedString::default();
+                                            this.send_amount = SharedString::default();
+                                            // 刷新余额
+                                            this.fetch_balance(account_index, cx);
+                                            cx.notify();
+                                        }).ok();
+                                    }
+                                    Err(e) => {
+                                        println!("发送交易失败: {}", e);
+                                        
+                                        this.update(&mut cx, |this, cx| {
+                                            this.send_error = Some(format!("发送失败: {}", e));
+                                            this.sending_transaction = false;
+                                            cx.notify();
+                                        }).ok();
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                println!("创建交易失败: {}", e);
+                                
+                                this.update(&mut cx, |this, cx| {
+                                    this.send_error = Some(format!("创建交易失败: {}", e));
+                                    this.sending_transaction = false;
+                                    cx.notify();
+                                }).ok();
+                            }
+                        }
+                    }).detach();
+                } else {
+                    self.send_error = Some("当前账户没有私钥，无法发送交易".to_string());
+                    self.sending_transaction = false;
+                    cx.notify();
+                }
+            }
         }
     }
 
