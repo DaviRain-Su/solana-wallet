@@ -1,11 +1,11 @@
-use solana_sdk::{
-    pubkey::Pubkey,
-    signature::{Keypair, Signature, SeedDerivable},
-    signer::Signer,
-};
+use anyhow::{anyhow, Result};
 use ed25519_dalek::SecretKey;
 use serde::{Deserialize, Serialize};
-use anyhow::{Result, anyhow};
+use solana_sdk::{
+    pubkey::Pubkey,
+    signature::{Keypair, SeedDerivable, Signature},
+    signer::Signer,
+};
 
 #[derive(Debug)]
 pub struct WalletKeypair {
@@ -25,11 +25,11 @@ impl WalletKeypair {
         if seed.len() < 32 {
             return Err(anyhow!("Seed must be at least 32 bytes"));
         }
-        
+
         // For Solana, we use the first 32 bytes of the seed as the secret key seed
         let keypair = Keypair::from_seed(&seed[0..32])
             .map_err(|e| anyhow!("Failed to create keypair from seed: {}", e))?;
-        
+
         Ok(Self { keypair })
     }
 

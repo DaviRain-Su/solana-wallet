@@ -1,3 +1,6 @@
+use crate::wallet::rpc::RpcManager;
+use anyhow::{anyhow, Result};
+use chrono;
 use solana_sdk::{
     instruction::Instruction,
     message::Message,
@@ -7,9 +10,6 @@ use solana_sdk::{
     system_instruction,
     transaction::Transaction,
 };
-use anyhow::{Result, anyhow};
-use crate::wallet::rpc::RpcManager;
-use chrono;
 
 /// 交易构建器
 pub struct TransactionBuilder {
@@ -25,48 +25,44 @@ impl TransactionBuilder {
             fee_payer: None,
         }
     }
-    
+
     /// 设置手续费支付者
     pub fn fee_payer(mut self, payer: Pubkey) -> Self {
         self.fee_payer = Some(payer);
         self
     }
-    
+
     /// 添加转账指令
     pub fn add_transfer(mut self, from: &Pubkey, to: &Pubkey, lamports: u64) -> Self {
         let instruction = system_instruction::transfer(from, to, lamports);
         self.instructions.push(instruction);
         self
     }
-    
+
     /// 添加自定义指令
     pub fn add_instruction(mut self, instruction: Instruction) -> Self {
         self.instructions.push(instruction);
         self
     }
-    
+
     /// 构建交易
     pub async fn build(self, rpc: &RpcManager) -> Result<Transaction> {
         if self.instructions.is_empty() {
             return Err(anyhow!("No instructions to build transaction"));
         }
-        
-        let fee_payer = self.fee_payer
-            .ok_or_else(|| anyhow!("Fee payer not set"))?;
-        
+
+        let fee_payer = self.fee_payer.ok_or_else(|| anyhow!("Fee payer not set"))?;
+
         // 获取最新区块哈希
         let recent_blockhash = rpc.get_latest_blockhash().await?;
-        
+
         // 创建消息
-        let message = Message::new_with_blockhash(
-            &self.instructions,
-            Some(&fee_payer),
-            &recent_blockhash,
-        );
-        
+        let message =
+            Message::new_with_blockhash(&self.instructions, Some(&fee_payer), &recent_blockhash);
+
         // 创建交易
         let transaction = Transaction::new_unsigned(message);
-        
+
         Ok(transaction)
     }
 }
@@ -84,7 +80,7 @@ impl TransactionHelper {
     ) -> Result<Transaction> {
         // 转换SOL到lamports
         let lamports = (sol_amount * 1_000_000_000.0) as u64;
-        
+
         // 检查余额
         let balance = rpc.get_balance(&from_keypair.pubkey()).await?;
         if balance < lamports {
@@ -94,38 +90,36 @@ impl TransactionHelper {
                 sol_amount
             ));
         }
-        
+
         // 构建交易
         let mut transaction = TransactionBuilder::new()
             .fee_payer(from_keypair.pubkey())
             .add_transfer(&from_keypair.pubkey(), to_pubkey, lamports)
             .build(rpc)
             .await?;
-        
+
         // 签名交易
         transaction.sign(&[from_keypair], transaction.message.recent_blockhash);
-        
+
         Ok(transaction)
     }
-    
+
     /// 估算交易手续费
-    pub async fn estimate_fee(
-        rpc: &RpcManager,
-        transaction: &Transaction,
-    ) -> Result<u64> {
+    pub async fn estimate_fee(rpc: &RpcManager, transaction: &Transaction) -> Result<u64> {
         let client = rpc.client.read().await;
-        
+
         // 获取最新区块哈希
-        let blockhash = client.get_latest_blockhash()
+        let blockhash = client
+            .get_latest_blockhash()
             .map_err(|e| anyhow!("Failed to get blockhash: {}", e))?;
-        
+
         // 使用默认费用（这是一个简化的实现）
         // 在Solana 2.0中，费用计算更复杂
         let fee = 5000; // 5000 lamports 是一个合理的默认值
-        
+
         Ok(fee)
     }
-    
+
     /// 发送并确认交易
     pub async fn send_and_confirm(
         rpc: &RpcManager,
@@ -133,13 +127,13 @@ impl TransactionHelper {
     ) -> Result<Signature> {
         // 发送交易
         let signature = rpc.send_transaction(transaction).await?;
-        
+
         println!("Transaction sent: {}", signature);
         println!("Waiting for confirmation...");
-        
+
         Ok(signature)
     }
-    
+
     /// 批量转账（用于空投等场景）
     pub async fn create_batch_transfer(
         rpc: &RpcManager,
@@ -149,14 +143,14 @@ impl TransactionHelper {
         if recipients.is_empty() {
             return Err(anyhow!("No recipients specified"));
         }
-        
+
         if recipients.len() > 10 {
             return Err(anyhow!("Too many recipients. Maximum 10 per transaction"));
         }
-        
+
         // 计算总金额
         let total_lamports: u64 = recipients.iter().map(|(_, amount)| amount).sum();
-        
+
         // 检查余额
         let balance = rpc.get_balance(&from_keypair.pubkey()).await?;
         if balance < total_lamports {
@@ -166,20 +160,19 @@ impl TransactionHelper {
                 total_lamports as f64 / 1_000_000_000.0
             ));
         }
-        
+
         // 构建交易
-        let mut builder = TransactionBuilder::new()
-            .fee_payer(from_keypair.pubkey());
-        
+        let mut builder = TransactionBuilder::new().fee_payer(from_keypair.pubkey());
+
         for (recipient, lamports) in recipients {
             builder = builder.add_transfer(&from_keypair.pubkey(), &recipient, lamports);
         }
-        
+
         let mut transaction = builder.build(rpc).await?;
-        
+
         // 签名交易
         transaction.sign(&[from_keypair], transaction.message.recent_blockhash);
-        
+
         Ok(transaction)
     }
 }
@@ -225,12 +218,12 @@ impl TransactionRecord {
             memo: None,
         }
     }
-    
+
     /// 获取金额（SOL）
     pub fn amount_in_sol(&self) -> f64 {
         self.amount as f64 / 1_000_000_000.0
     }
-    
+
     /// 获取手续费（SOL）
     pub fn fee_in_sol(&self) -> f64 {
         self.fee as f64 / 1_000_000_000.0
