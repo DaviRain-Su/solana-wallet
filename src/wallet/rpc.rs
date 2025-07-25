@@ -10,13 +10,13 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 /// Solana网络类型
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SolanaNetwork {
     Mainnet,
     Devnet,
     Testnet,
     Localnet,
-    Custom(u16), // 自定义端口的本地网络
+    Custom(String), // 自定义RPC URL
 }
 
 impl SolanaNetwork {
@@ -27,7 +27,7 @@ impl SolanaNetwork {
             SolanaNetwork::Devnet => "https://api.devnet.solana.com".to_string(),
             SolanaNetwork::Testnet => "https://api.testnet.solana.com".to_string(),
             SolanaNetwork::Localnet => "http://localhost:8899".to_string(),
-            SolanaNetwork::Custom(port) => format!("http://localhost:{}", port),
+            SolanaNetwork::Custom(url) => url.clone(),
         }
     }
     
@@ -78,7 +78,7 @@ impl RpcManager {
     
     /// 获取当前网络
     pub async fn current_network(&self) -> SolanaNetwork {
-        *self.network.read().await
+        self.network.read().await.clone()
     }
     
     /// 获取账户余额（单位：lamports）
@@ -146,7 +146,7 @@ impl RpcManager {
     
     /// 请求空投（仅限测试网）
     pub async fn request_airdrop(&self, pubkey: &Pubkey, lamports: u64) -> Result<Signature> {
-        let network = *self.network.read().await;
+        let network = self.network.read().await.clone();
         match network {
             SolanaNetwork::Devnet | SolanaNetwork::Testnet | SolanaNetwork::Localnet | SolanaNetwork::Custom(_) => {
                 let client = self.client.read().await;
@@ -233,7 +233,7 @@ mod tests {
         assert_eq!(SolanaNetwork::Devnet.rpc_url(), "https://api.devnet.solana.com");
         assert_eq!(SolanaNetwork::Testnet.rpc_url(), "https://api.testnet.solana.com");
         assert_eq!(SolanaNetwork::Localnet.rpc_url(), "http://localhost:8899");
-        assert_eq!(SolanaNetwork::Custom(9999).rpc_url(), "http://localhost:9999");
+        assert_eq!(SolanaNetwork::Custom("http://localhost:9999".to_string()).rpc_url(), "http://localhost:9999");
     }
     
     #[tokio::test]

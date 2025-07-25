@@ -1,5 +1,7 @@
 use gpui::*;
+use gpui::prelude::FluentBuilder;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::v_flex;
 use std::sync::Arc;
 mod wallet;
 mod app;
@@ -7,7 +9,7 @@ mod theme;
 
 use wallet::{
     generate_mnemonic, MnemonicPhrase, WalletAccount, WalletStorage, 
-    WalletData, AccountData, RpcManager, SolanaNetwork
+    WalletData, AccountData, RpcManager, SolanaNetwork, WalletKeypair
 };
 use theme::{Theme, ThemeMode};
 
@@ -16,9 +18,17 @@ actions!(wallet, [Quit, CreateWallet, ImportWallet]);
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum ImportField {
     Mnemonic,
+    PrivateKey,
     WalletName,
     Password,
     ConfirmPassword,
+    CustomRpcUrl,
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ImportType {
+    Mnemonic,
+    PrivateKey,
 }
 
 #[derive(Clone, PartialEq)]
@@ -52,10 +62,14 @@ struct MainWindow {
     theme: Theme,
     current_network: SolanaNetwork,
     show_network_selector: bool,
+    show_rpc_config: bool,
+    custom_rpc_url: SharedString,
     requesting_airdrop: bool,
     pending_balance_update: Option<std::sync::mpsc::Receiver<Result<f64, anyhow::Error>>>,
     // 导入钱包相关字段
+    import_type: ImportType,
     import_mnemonic: SharedString,
+    import_private_key: SharedString,
     import_wallet_name: SharedString,
     import_password: SharedString,
     import_confirm_password: SharedString,
@@ -68,6 +82,11 @@ struct MainWindow {
     sending_transaction: bool,
     // 焦点处理
     focus_handle: FocusHandle,
+    rpc_focused: bool,
+}
+
+fn is_password_field(field: ImportField) -> bool {
+    matches!(field, ImportField::Password | ImportField::ConfirmPassword)
 }
 
 impl MainWindow {
@@ -75,13 +94,7 @@ impl MainWindow {
         // 清空错误
         self.import_error = None;
         
-        // 验证输入
-        if self.import_mnemonic.is_empty() {
-            self.import_error = Some("请输入助记词".to_string());
-            cx.notify();
-            return;
-        }
-        
+        // 验证通用字段
         if self.import_wallet_name.is_empty() {
             self.import_error = Some("请输入钱包名称".to_string());
             cx.notify();
@@ -100,25 +113,94 @@ impl MainWindow {
             return;
         }
         
-        // 验证助记词
-        match MnemonicPhrase::from_phrase(&self.import_mnemonic) {
-            Ok(mnemonic) => {
-                if let Some(ref storage) = self.storage {
-                    // 创建钱包数据
-                    let mut wallet_data = WalletData {
-                        mnemonic: mnemonic.phrase(),
-                        accounts: vec![],
-                        created_at: chrono::Utc::now(),
-                        modified_at: chrono::Utc::now(),
-                    };
+        if let Some(ref storage) = self.storage {
+            match self.import_type {
+                ImportType::Mnemonic => {
+                    // 验证助记词
+                    if self.import_mnemonic.is_empty() {
+                        self.import_error = Some("请输入助记词".to_string());
+                        cx.notify();
+                        return;
+                    }
                     
-                    // 派生第一个账户
-                    match mnemonic.derive_keypair(0) {
-                        Ok(derived) => {
+                    match MnemonicPhrase::from_phrase(&self.import_mnemonic) {
+                        Ok(mnemonic) => {
+                            // 创建钱包数据
+                            let mut wallet_data = WalletData {
+                                mnemonic: mnemonic.phrase(),
+                                accounts: vec![],
+                                created_at: chrono::Utc::now(),
+                                modified_at: chrono::Utc::now(),
+                            };
+                            
+                            // 派生第一个账户
+                            match mnemonic.derive_keypair(0) {
+                                Ok(derived) => {
+                                    let account_data = AccountData {
+                                        name: "导入账户 1".to_string(),
+                                        derivation_path: derived.derivation_path.clone(),
+                                        pubkey: derived.keypair.pubkey().to_string(),
+                                    };
+                                    wallet_data.accounts.push(account_data);
+                                    
+                                    // 保存钱包
+                                    match storage.save_wallet(&self.import_wallet_name, &wallet_data, &self.import_password) {
+                                        Ok(_) => {
+                                            // 创建内存中的账户
+                                            let account = WalletAccount::with_derivation_path(
+                                                "导入账户 1".to_string(),
+                                                derived.keypair,
+                                                derived.derivation_path,
+                                            );
+                                            self.accounts.push(account);
+                                            
+                                            // 跳转到仪表板
+                                            self.view_state = ViewState::Dashboard { account_index: 0 };
+                                            self.fetch_balance(0, cx);
+                                            cx.notify();
+                                        }
+                                        Err(e) => {
+                                            self.import_error = Some(format!("保存钱包失败: {}", e));
+                                            cx.notify();
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    self.import_error = Some(format!("派生密钥失败: {}", e));
+                                    cx.notify();
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.import_error = Some(format!("无效的助记词: {}", e));
+                            cx.notify();
+                        }
+                    }
+                }
+                ImportType::PrivateKey => {
+                    // 验证私钥
+                    if self.import_private_key.is_empty() {
+                        self.import_error = Some("请输入私钥".to_string());
+                        cx.notify();
+                        return;
+                    }
+                    
+                    // 尝试解析私钥 - 先清理空白字符
+                    let cleaned_private_key = self.import_private_key.trim();
+                    match WalletKeypair::from_base58_string(cleaned_private_key) {
+                        Ok(wallet_keypair) => {
+                            // 创建钱包数据（对于私钥导入，我们生成一个占位助记词）
+                            let mut wallet_data = WalletData {
+                                mnemonic: "IMPORTED_FROM_PRIVATE_KEY".to_string(),
+                                accounts: vec![],
+                                created_at: chrono::Utc::now(),
+                                modified_at: chrono::Utc::now(),
+                            };
+                            
                             let account_data = AccountData {
-                                name: "导入账户 1".to_string(),
-                                derivation_path: derived.derivation_path.clone(),
-                                pubkey: derived.keypair.pubkey().to_string(),
+                                name: "导入账户".to_string(),
+                                derivation_path: "m/imported".to_string(),
+                                pubkey: wallet_keypair.pubkey().to_string(),
                             };
                             wallet_data.accounts.push(account_data);
                             
@@ -126,10 +208,10 @@ impl MainWindow {
                             match storage.save_wallet(&self.import_wallet_name, &wallet_data, &self.import_password) {
                                 Ok(_) => {
                                     // 创建内存中的账户
-                                    let account = WalletAccount::with_derivation_path(
-                                        "导入账户 1".to_string(),
-                                        derived.keypair,
-                                        derived.derivation_path,
+                                    let account = WalletAccount::new(
+                                        "导入账户".to_string(),
+                                        wallet_keypair,
+                                        true,  // is_imported = true for private key import
                                     );
                                     self.accounts.push(account);
                                     
@@ -145,19 +227,15 @@ impl MainWindow {
                             }
                         }
                         Err(e) => {
-                            self.import_error = Some(format!("派生密钥失败: {}", e));
+                            self.import_error = Some(format!("无效的私钥: {}", e));
                             cx.notify();
                         }
                     }
-                } else {
-                    self.import_error = Some("存储未初始化".to_string());
-                    cx.notify();
                 }
             }
-            Err(e) => {
-                self.import_error = Some(format!("无效的助记词: {}", e));
-                cx.notify();
-            }
+        } else {
+            self.import_error = Some("存储未初始化".to_string());
+            cx.notify();
         }
     }
     
@@ -270,6 +348,12 @@ impl MainWindow {
     }
     
     fn handle_import_key_event(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        // Handle RPC config dialog keyboard events
+        if self.show_rpc_config && self.rpc_focused {
+            self.handle_rpc_key_event(event, cx);
+            return;
+        }
+        
         if self.view_state != ViewState::ImportWallet {
             return;
         }
@@ -279,10 +363,53 @@ impl MainWindow {
             // Get the field value to modify
             let field_value = match field {
                 ImportField::Mnemonic => &mut self.import_mnemonic,
+                ImportField::PrivateKey => &mut self.import_private_key,
                 ImportField::WalletName => &mut self.import_wallet_name,
                 ImportField::Password => &mut self.import_password,
                 ImportField::ConfirmPassword => &mut self.import_confirm_password,
+                ImportField::CustomRpcUrl => return, // Handled separately
             };
+            
+            // Check for copy/paste commands
+            let is_cmd_or_ctrl = if cfg!(target_os = "macos") {
+                keystroke.modifiers.platform
+            } else {
+                keystroke.modifiers.control
+            };
+            
+            if is_cmd_or_ctrl {
+                match keystroke.key.as_str() {
+                    "c" => {
+                        // Copy current field value to clipboard
+                        if !field_value.is_empty() && !is_password_field(field) {
+                            cx.write_to_clipboard(ClipboardItem::new_string(field_value.to_string()));
+                        }
+                        return;
+                    }
+                    "v" => {
+                        // Paste from clipboard
+                        if let Some(clipboard_text) = cx.read_from_clipboard() {
+                            if let Some(text) = clipboard_text.text() {
+                                // Clean the text by trimming whitespace for private key field
+                                let cleaned_text = if field == ImportField::PrivateKey {
+                                    text.trim().to_string()
+                                } else {
+                                    text.to_string()
+                                };
+                                *field_value = cleaned_text.into();
+                                cx.notify();
+                            }
+                        }
+                        return;
+                    }
+                    "a" => {
+                        // Select all - we can't visually show selection, but we could store it for copy
+                        // For now, just return
+                        return;
+                    }
+                    _ => {}
+                }
+            }
             
             // Handle different key inputs
             match keystroke.key.as_str() {
@@ -296,9 +423,17 @@ impl MainWindow {
                     // Move to next field
                     self.import_focused_field = Some(match field {
                         ImportField::Mnemonic => ImportField::WalletName,
+                        ImportField::PrivateKey => ImportField::WalletName,
                         ImportField::WalletName => ImportField::Password,
                         ImportField::Password => ImportField::ConfirmPassword,
-                        ImportField::ConfirmPassword => ImportField::Mnemonic,
+                        ImportField::ConfirmPassword => {
+                            if self.import_type == ImportType::Mnemonic {
+                                ImportField::Mnemonic
+                            } else {
+                                ImportField::PrivateKey
+                            }
+                        },
+                        ImportField::CustomRpcUrl => ImportField::CustomRpcUrl,
                     });
                     cx.notify();
                 }
@@ -315,7 +450,7 @@ impl MainWindow {
                 }
                 key => {
                     // Handle regular character input
-                    if key.len() == 1 {
+                    if key.len() == 1 && !key.chars().any(|c| c.is_control()) {
                         let new_val = format!("{}{}", field_value, key);
                         *field_value = new_val.into();
                         cx.notify();
@@ -341,7 +476,7 @@ impl MainWindow {
             });
         
         let current_network = SolanaNetwork::Devnet;
-        let rpc_manager = Arc::new(RpcManager::new(current_network));
+        let rpc_manager = Arc::new(RpcManager::new(current_network.clone()));
         println!("RPC manager created for Devnet");
         
         let focus_handle = cx.focus_handle();
@@ -359,9 +494,13 @@ impl MainWindow {
             theme: Theme::dark(),
             current_network,
             show_network_selector: false,
+            show_rpc_config: false,
+            custom_rpc_url: SharedString::default(),
             requesting_airdrop: false,
             pending_balance_update: None,
+            import_type: ImportType::Mnemonic,
             import_mnemonic: SharedString::default(),
+            import_private_key: SharedString::default(),
             import_wallet_name: SharedString::default(),
             import_password: SharedString::default(),
             import_confirm_password: SharedString::default(),
@@ -372,6 +511,7 @@ impl MainWindow {
             send_error: None,
             sending_transaction: false,
             focus_handle,
+            rpc_focused: false,
         }
     }
 
@@ -389,9 +529,13 @@ impl MainWindow {
         }
     }
 
-    fn import_wallet(&mut self, cx: &mut Context<Self>) {
+    fn import_wallet(&mut self, _cx: &mut Context<Self>) {
         self.view_state = ViewState::ImportWallet;
-        self.import_focused_field = Some(ImportField::Mnemonic);
+        self.import_focused_field = Some(if self.import_type == ImportType::Mnemonic {
+            ImportField::Mnemonic
+        } else {
+            ImportField::PrivateKey
+        });
         // Focus will be set when user clicks on an input field
     }
     
@@ -480,9 +624,29 @@ impl MainWindow {
         self.show_network_selector = !self.show_network_selector;
         cx.notify();
     }
+    
+    fn show_rpc_config_dialog(&mut self, cx: &mut Context<Self>) {
+        self.show_rpc_config = true;
+        self.rpc_focused = true;
+        // Set current RPC URL
+        if let SolanaNetwork::Custom(url) = &self.current_network {
+            self.custom_rpc_url = url.clone().into();
+        } else {
+            self.custom_rpc_url = self.current_network.rpc_url().into();
+        }
+        cx.notify();
+    }
+    
+    fn apply_custom_rpc(&mut self, cx: &mut Context<Self>) {
+        if !self.custom_rpc_url.is_empty() {
+            let network = SolanaNetwork::Custom(self.custom_rpc_url.to_string());
+            self.switch_network(network, cx);
+            self.show_rpc_config = false;
+        }
+    }
 
     fn switch_network(&mut self, network: SolanaNetwork, cx: &mut Context<Self>) {
-        self.current_network = network;
+        self.current_network = network.clone();
         self.show_network_selector = false;
         
         // 切换RPC网络
@@ -490,7 +654,7 @@ impl MainWindow {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                if let Err(e) = rpc.switch_network(network).await {
+                if let Err(e) = rpc.switch_network(network.clone()).await {
                     println!("切换网络失败: {}", e);
                 } else {
                     println!("成功切换到网络: {}", network.name());
@@ -683,10 +847,226 @@ impl Render for MainWindow {
                         }
                     )
             )
+            .when(self.show_rpc_config, |this| {
+                this.child(self.render_rpc_config_dialog(cx))
+            })
     }
 }
 
 impl MainWindow {
+    fn render_rpc_input_field(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let border_color = if self.rpc_focused {
+            self.theme.primary
+        } else {
+            self.theme.border
+        };
+        
+        let display_text = if self.custom_rpc_url.is_empty() {
+            SharedString::from("https://api.mainnet-beta.solana.com")
+        } else {
+            self.custom_rpc_url.clone()
+        };
+        
+        div()
+            .w_full()
+            .px_3()
+            .py_2()
+            .bg(self.theme.surface)
+            .border_1()
+            .border_color(border_color)
+            .rounded(px(6.0))
+            .flex()
+            .items_center()
+            .cursor_text()
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                this.rpc_focused = true;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .flex_1()
+                    .text_color(if self.custom_rpc_url.is_empty() {
+                        self.theme.text_disabled
+                    } else {
+                        self.theme.text_primary
+                    })
+                    .child(display_text)
+            )
+            .when(self.rpc_focused && !self.custom_rpc_url.is_empty(), |el| {
+                el.child(
+                    div()
+                        .w(px(1.0))
+                        .h(px(20.0))
+                        .bg(self.theme.primary)
+                        // Cursor animation
+                )
+            })
+    }
+    
+    fn handle_rpc_key_event(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        let keystroke = &event.keystroke;
+        
+        // Check for copy/paste commands
+        let is_cmd_or_ctrl = if cfg!(target_os = "macos") {
+            keystroke.modifiers.platform
+        } else {
+            keystroke.modifiers.control
+        };
+        
+        if is_cmd_or_ctrl {
+            match keystroke.key.as_str() {
+                "c" => {
+                    // Copy current field value to clipboard
+                    if !self.custom_rpc_url.is_empty() {
+                        cx.write_to_clipboard(ClipboardItem::new_string(self.custom_rpc_url.to_string()));
+                    }
+                    return;
+                }
+                "v" => {
+                    // Paste from clipboard
+                    if let Some(clipboard_text) = cx.read_from_clipboard() {
+                        if let Some(text) = clipboard_text.text() {
+                            self.custom_rpc_url = text.trim().to_string().into();
+                            cx.notify();
+                        }
+                    }
+                    return;
+                }
+                _ => {}
+            }
+        }
+        
+        match keystroke.key.as_str() {
+            "backspace" => {
+                if !self.custom_rpc_url.is_empty() {
+                    let mut url = self.custom_rpc_url.to_string();
+                    url.pop();
+                    self.custom_rpc_url = url.into();
+                    cx.notify();
+                }
+            }
+            "escape" => {
+                self.show_rpc_config = false;
+                self.rpc_focused = false;
+                cx.notify();
+            }
+            "enter" => {
+                self.apply_custom_rpc(cx);
+            }
+            "space" => {
+                let mut url = self.custom_rpc_url.to_string();
+                url.push(' ');
+                self.custom_rpc_url = url.into();
+                cx.notify();
+            }
+            key => {
+                if key.len() == 1 && !key.chars().any(|c| c.is_control()) {
+                    let mut url = self.custom_rpc_url.to_string();
+                    url.push_str(key);
+                    self.custom_rpc_url = url.into();
+                    cx.notify();
+                }
+            }
+        }
+    }
+
+    fn render_rpc_config_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        // 创建一个覆盖整个窗口的半透明背景
+        div()
+            .absolute()
+            .top_0()
+            .left_0()
+            .size_full()
+            .bg(rgba(0x00000080))
+            .flex()
+            .items_center()
+            .justify_center()
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                this.show_rpc_config = false;
+                this.rpc_focused = false;
+                cx.notify();
+            }))
+            .child(
+                // 对话框容器
+                div()
+                    .bg(self.theme.background)
+                    .rounded(px(12.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .p(px(24.0))
+                    .w(px(500.0))
+                    .shadow_lg()
+                    .on_mouse_down(MouseButton::Left, |_, _, _| {
+                        // 阻止事件冒泡，防止点击对话框内容时关闭
+                    })
+                    .child(
+                        v_flex()
+                            .gap_4()
+                            .child(
+                                div()
+                                    .text_xl()
+                                    .text_color(self.theme.text_primary)
+                                    .mb(px(8.0))
+                                    .child("配置 RPC 端点")
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(self.theme.text_secondary)
+                                    .child("输入自定义 RPC URL 以连接到不同的节点")
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .mt(px(16.0))
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(self.theme.text_secondary)
+                                            .child("RPC URL")
+                                    )
+                                    .child(
+                                        self.render_rpc_input_field(cx)
+                                    )
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(self.theme.text_disabled)
+                                    .mt(px(8.0))
+                                    .child("常用 RPC 提供商：Alchemy, QuickNode, Helius, Triton 等")
+                            )
+                            .child(
+                                div()
+                                    .flex()
+                                    .gap_3()
+                                    .justify_end()
+                                    .mt(px(20.0))
+                                    .child(
+                                        Button::new("cancel-rpc")
+                                            .label("取消")
+                                            .ghost()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.show_rpc_config = false;
+                                                this.rpc_focused = false;
+                                                cx.notify();
+                                            }))
+                                    )
+                                    .child(
+                                        Button::new("apply-rpc")
+                                            .label("应用")
+                                            .primary()
+                                            .on_click(cx.listener(|this, _, _, cx| {
+                                                this.apply_custom_rpc(cx);
+                                            }))
+                                    )
+                            )
+                    )
+            )
+    }
+    
     fn render_welcome_content(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
@@ -919,11 +1299,48 @@ impl MainWindow {
                     .child("导入钱包")
             )
             .child(
+                // 导入类型切换
+                div()
+                    .flex()
+                    .gap_4()
+                    .mb(px(20.0))
+                    .child(
+                        Button::new("import-type-mnemonic")
+                            .label("助记词")
+                            .when(self.import_type == ImportType::Mnemonic, |b| b.primary())
+                            .when(self.import_type != ImportType::Mnemonic, |b| b.ghost())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.import_type = ImportType::Mnemonic;
+                                this.import_focused_field = Some(ImportField::Mnemonic);
+                                // 清空私钥
+                                this.import_private_key = SharedString::default();
+                                cx.notify();
+                            }))
+                    )
+                    .child(
+                        Button::new("import-type-private-key")
+                            .label("私钥")
+                            .when(self.import_type == ImportType::PrivateKey, |b| b.primary())
+                            .when(self.import_type != ImportType::PrivateKey, |b| b.ghost())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.import_type = ImportType::PrivateKey;
+                                this.import_focused_field = Some(ImportField::PrivateKey);
+                                // 清空助记词
+                                this.import_mnemonic = SharedString::default();
+                                cx.notify();
+                            }))
+                    )
+            )
+            .child(
                 div()
                     .text_color(self.theme.text_secondary)
                     .text_center()
                     .max_w(px(500.0))
-                    .child("请输入您的12个或24个助记词，用空格分隔")
+                    .child(if self.import_type == ImportType::Mnemonic {
+                        "请输入您的12个或24个助记词，用空格分隔"
+                    } else {
+                        "请输入您的Base58格式私钥"
+                    })
             )
             .child(
                 div()
@@ -933,25 +1350,47 @@ impl MainWindow {
                     .w_full()
                     .max_w(px(500.0))
                     .child(
-                        // 助记词输入框
-                        div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(self.theme.text_secondary)
-                                    .child("助记词")
-                            )
-                            .child(
-                                self.render_textarea_field(
-                                    &self.import_mnemonic,
-                                    "输入您的12个或者更多助记词...",
-                                    ImportField::Mnemonic,
-                                    cx
+                        // 助记词或私钥输入框
+                        if self.import_type == ImportType::Mnemonic {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(self.theme.text_secondary)
+                                        .child("助记词")
                                 )
-                            )
+                                .child(
+                                    self.render_textarea_field(
+                                        &self.import_mnemonic,
+                                        "输入您的12个或者更多助记词...",
+                                        ImportField::Mnemonic,
+                                        cx
+                                    )
+                                )
+                        } else {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .child(
+                                    div()
+                                        .text_sm()
+                                        .text_color(self.theme.text_secondary)
+                                        .child("私钥")
+                                )
+                                .child(
+                                    self.render_input_field(
+                                        &self.import_private_key,
+                                        "输入您的私钥...",
+                                        ImportField::PrivateKey,
+                                        false,
+                                        cx
+                                    )
+                                )
+                        }
                     )
                     .child(
                         // 钱包名称输入框
@@ -1044,6 +1483,7 @@ impl MainWindow {
                             .on_click(cx.listener(|this, _, _window, cx| {
                                 // 清空输入
                                 this.import_mnemonic = SharedString::default();
+                                this.import_private_key = SharedString::default();
                                 this.import_wallet_name = SharedString::default();
                                 this.import_password = SharedString::default();
                                 this.import_confirm_password = SharedString::default();
@@ -1149,6 +1589,14 @@ impl MainWindow {
                                                     this.switch_network(SolanaNetwork::Testnet, cx);
                                                 }))
                                         }
+                                    )
+                                    .child(
+                                        Button::new("rpc-config")
+                                            .label("⚙️")
+                                            .ghost()
+                                            .on_click(cx.listener(|this, _, _window, cx| {
+                                                this.show_rpc_config_dialog(cx);
+                                            }))
                                     )
                             )
                     )
