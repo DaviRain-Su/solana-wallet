@@ -4,27 +4,48 @@ use gpui_component::button::{Button, ButtonVariants};
 mod wallet;
 mod app;
 
-use wallet::{generate_mnemonic, MnemonicPhrase, WalletAccount};
+use wallet::{generate_mnemonic, MnemonicPhrase, WalletAccount, WalletStorage, WalletData, AccountData};
 
 actions!(wallet, [Quit, CreateWallet, ImportWallet]);
 
 enum ViewState {
     Welcome,
-    CreateWallet { mnemonic: Option<MnemonicPhrase> },
+    CreateWallet { 
+        mnemonic: Option<MnemonicPhrase>,
+        step: CreateWalletStep,
+    },
     ImportWallet,
     Dashboard { account_index: usize },
+}
+
+#[derive(Clone, PartialEq)]
+enum CreateWalletStep {
+    ShowMnemonic,
+    SetPassword,
 }
 
 struct MainWindow {
     view_state: ViewState,
     accounts: Vec<WalletAccount>,
+    wallet_name: SharedString,
+    password: SharedString,
+    confirm_password: SharedString,
+    storage: Option<WalletStorage>,
 }
 
 impl MainWindow {
     fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+        let storage = WalletStorage::default_path()
+            .ok()
+            .and_then(|path| WalletStorage::new(path).ok());
+        
         Self {
             view_state: ViewState::Welcome,
             accounts: Vec::new(),
+            wallet_name: SharedString::default(),
+            password: SharedString::default(),
+            confirm_password: SharedString::default(),
+            storage,
         }
     }
 
@@ -33,6 +54,7 @@ impl MainWindow {
             Ok(mnemonic) => {
                 self.view_state = ViewState::CreateWallet {
                     mnemonic: Some(mnemonic),
+                    step: CreateWalletStep::ShowMnemonic,
                 };
             }
             Err(e) => {
@@ -43,6 +65,77 @@ impl MainWindow {
 
     fn import_wallet(&mut self, _cx: &mut Context<Self>) {
         self.view_state = ViewState::ImportWallet;
+    }
+    
+    fn save_wallet(&mut self, cx: &mut Context<Self>) {
+        // 验证输入
+        if self.wallet_name.is_empty() {
+            println!("钱包名称不能为空");
+            return;
+        }
+        
+        if self.password.is_empty() {
+            println!("密码不能为空");
+            return;
+        }
+        
+        if self.password != self.confirm_password {
+            println!("两次输入的密码不一致");
+            return;
+        }
+        
+        if let ViewState::CreateWallet { mnemonic: Some(ref mnemonic), .. } = &self.view_state {
+            if let Some(ref storage) = self.storage {
+                // 创建钱包数据
+                let mut wallet_data = WalletData {
+                    mnemonic: mnemonic.phrase(),
+                    accounts: vec![],
+                    created_at: chrono::Utc::now(),
+                    modified_at: chrono::Utc::now(),
+                };
+                
+                // 派生第一个账户
+                match mnemonic.derive_keypair(0) {
+                    Ok(derived) => {
+                        let account_data = AccountData {
+                            name: "账户 1".to_string(),
+                            derivation_path: derived.derivation_path.clone(),
+                            pubkey: derived.keypair.pubkey().to_string(),
+                        };
+                        wallet_data.accounts.push(account_data);
+                        
+                        // 保存钱包
+                        match storage.save_wallet(&self.wallet_name, &wallet_data, &self.password) {
+                            Ok(_) => {
+                                // 创建内存中的账户
+                                let account = WalletAccount::with_derivation_path(
+                                    "账户 1".to_string(),
+                                    derived.keypair,
+                                    derived.derivation_path,
+                                );
+                                self.accounts.push(account);
+                                
+                                // 清空密码
+                                self.password = SharedString::default();
+                                self.confirm_password = SharedString::default();
+                                
+                                // 跳转到仪表板
+                                self.view_state = ViewState::Dashboard { account_index: 0 };
+                                cx.notify();
+                            }
+                            Err(e) => {
+                                println!("保存钱包失败: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        println!("派生密钥失败: {}", e);
+                    }
+                }
+            } else {
+                println!("存储未初始化");
+            }
+        }
     }
 }
 
@@ -58,7 +151,16 @@ impl Render for MainWindow {
             .child(
                 match &self.view_state {
                     ViewState::Welcome => div().child(self.render_welcome_content(cx)),
-                    ViewState::CreateWallet { mnemonic } => div().child(self.render_create_wallet_content(mnemonic, cx)),
+                    ViewState::CreateWallet { mnemonic, step } => {
+                        match step {
+                            CreateWalletStep::ShowMnemonic => {
+                                div().child(self.render_mnemonic_content(mnemonic, cx))
+                            }
+                            CreateWalletStep::SetPassword => {
+                                div().child(self.render_password_content(mnemonic, cx))
+                            }
+                        }
+                    }
                     ViewState::ImportWallet => div().child(self.render_import_wallet_content(cx)),
                     ViewState::Dashboard { account_index } => {
                         if let Some(account) = self.accounts.get(*account_index) {
@@ -127,7 +229,7 @@ impl MainWindow {
             )
     }
 
-    fn render_create_wallet_content(&self, mnemonic: &Option<MnemonicPhrase>, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_mnemonic_content(&self, mnemonic: &Option<MnemonicPhrase>, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_col()
@@ -205,26 +307,75 @@ impl MainWindow {
                             .label("我已保存助记词")
                             .primary()
                             .on_click(cx.listener(|this, _, _, cx| {
-                                if let ViewState::CreateWallet { mnemonic: Some(ref mnemonic) } = &this.view_state {
-                                    // 从助记词派生第一个账户
-                                    match mnemonic.derive_keypair(0) {
-                                        Ok(derived) => {
-                                            let account = WalletAccount::with_derivation_path(
-                                                "账户 1".to_string(),
-                                                derived.keypair,
-                                                derived.derivation_path,
-                                            );
-                                            this.accounts.push(account);
-                                            this.view_state = ViewState::Dashboard { account_index: 0 };
-                                            cx.notify();
-                                        }
-                                        Err(e) => {
-                                            println!("Failed to derive keypair: {}", e);
-                                        }
-                                    }
+                                if let ViewState::CreateWallet { mnemonic, .. } = &this.view_state {
+                                    this.view_state = ViewState::CreateWallet {
+                                        mnemonic: mnemonic.clone(),
+                                        step: CreateWalletStep::SetPassword,
+                                    };
+                                    cx.notify();
                                 }
                             }))
                     )
+            )
+    }
+
+    fn render_password_content(&self, mnemonic: &Option<MnemonicPhrase>, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .items_center()
+            .justify_center()
+            .gap_6()
+            .p(px(40.0))
+            .child(
+                div()
+                    .text_2xl()
+                    .text_color(rgb(0xffffff))
+                    .child("钱包创建成功")
+            )
+            .child(
+                div()
+                    .text_color(rgb(0x00ff00))
+                    .child("✓ 您的钱包已经创建成功！")
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap_2()
+                    .p(px(20.0))
+                    .bg(rgb(0x2a2a2a))
+                    .rounded(px(8.0))
+                    .child(
+                        div()
+                            .text_color(rgb(0xaaaaaa))
+                            .child("为了演示，我们使用默认设置：")
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xcccccc))
+                            .child("钱包名称: 我的钱包")
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(rgb(0xcccccc))
+                            .child("密码: (已加密存储)")
+                    )
+            )
+            .child(
+                Button::new("continue-to-dashboard")
+                    .label("进入钱包")
+                    .primary()
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        // 使用默认值保存钱包
+                        this.wallet_name = "我的钱包".into();
+                        this.password = "password123".into();
+                        this.confirm_password = "password123".into();
+                        this.save_wallet(cx);
+                    }))
             )
     }
 

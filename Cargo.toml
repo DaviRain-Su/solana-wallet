@@ -21,6 +21,9 @@ ed25519-dalek = "2.1"
 bip39 = { version = "2.0", features = ["rand"] }
 bs58 = "0.5"
 rand = "0.8"
+aes-gcm = "0.10"
+argon2 = "0.5"
+zeroize = { version = "1.7", features = ["derive"] }
 
 # Async
 tokio = { version = "1.35", features = ["full"] }
@@ -37,6 +40,7 @@ anyhow = "1.0"
 thiserror = "1.0"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+dirs = "5.0"
 
 [dev-dependencies]
 tempfile = "3.8"
