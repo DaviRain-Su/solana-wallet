@@ -90,6 +90,25 @@ fn is_password_field(field: ImportField) -> bool {
 }
 
 impl MainWindow {
+    fn wrap_button_with_theme(
+        &self,
+        button: Button,
+        is_primary: bool,
+    ) -> impl IntoElement {
+        // 为按钮添加一个包装器来控制文本颜色
+        let text_color = if is_primary {
+            rgb(0xffffff) // 主按钮始终使用白色文字
+        } else if self.theme.mode == ThemeMode::Light {
+            rgb(0x1a1a1a) // 浅色主题使用深色文字
+        } else {
+            rgb(0xffffff) // 深色主题使用白色文字
+        };
+        
+        div()
+            .text_color(text_color)
+            .child(button)
+    }
+    
     fn process_import_wallet(&mut self, cx: &mut Context<Self>) {
         // 清空错误
         self.import_error = None;
@@ -801,12 +820,15 @@ impl Render for MainWindow {
                     .border_b_1()
                     .border_color(self.theme.border)
                     .child(
-                        Button::new("theme-toggle")
-                            .label(if self.theme.mode == ThemeMode::Dark { "🌞" } else { "🌙" })
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.toggle_theme(cx);
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("theme-toggle")
+                                .label(if self.theme.mode == ThemeMode::Dark { "🌞" } else { "🌙" })
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.toggle_theme(cx);
+                                })),
+                            false
+                        )
                     )
             )
             .child(
@@ -1045,22 +1067,28 @@ impl MainWindow {
                                     .justify_end()
                                     .mt(px(20.0))
                                     .child(
-                                        Button::new("cancel-rpc")
-                                            .label("取消")
-                                            .ghost()
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.show_rpc_config = false;
-                                                this.rpc_focused = false;
-                                                cx.notify();
-                                            }))
+                                        self.wrap_button_with_theme(
+                                            Button::new("cancel-rpc")
+                                                .label("取消")
+                                                .ghost()
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.show_rpc_config = false;
+                                                    this.rpc_focused = false;
+                                                    cx.notify();
+                                                })),
+                                            false
+                                        )
                                     )
                                     .child(
-                                        Button::new("apply-rpc")
-                                            .label("应用")
-                                            .primary()
-                                            .on_click(cx.listener(|this, _, _, cx| {
-                                                this.apply_custom_rpc(cx);
-                                            }))
+                                        self.wrap_button_with_theme(
+                                            Button::new("apply-rpc")
+                                                .label("应用")
+                                                .primary()
+                                                .on_click(cx.listener(|this, _, _, cx| {
+                                                    this.apply_custom_rpc(cx);
+                                                })),
+                                            true
+                                        )
                                     )
                             )
                     )
@@ -1102,22 +1130,28 @@ impl MainWindow {
                     .w_full()
                     .max_w(px(300.0))
                     .child(
-                        Button::new("create-wallet")
-                            .label("创建新钱包")
-                            .primary()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.create_wallet(cx);
-                                cx.notify();
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("create-wallet")
+                                .label("创建新钱包")
+                                .primary()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.create_wallet(cx);
+                                    cx.notify();
+                                })),
+                            true
+                        )
                     )
                     .child(
-                        Button::new("import-wallet")
-                            .label("导入已有钱包")
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.import_wallet(cx);
-                                cx.notify();
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("import-wallet")
+                                .label("导入已有钱包")
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.import_wallet(cx);
+                                    cx.notify();
+                                })),
+                            false
+                        )
                     )
             )
     }
@@ -1190,27 +1224,33 @@ impl MainWindow {
                     .flex()
                     .gap_4()
                     .child(
-                        Button::new("back")
-                            .label("返回")
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.view_state = ViewState::Welcome;
-                                cx.notify();
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("back")
+                                .label("返回")
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.view_state = ViewState::Welcome;
+                                    cx.notify();
+                                })),
+                            false
+                        )
                     )
                     .child(
-                        Button::new("continue")
-                            .label("我已保存助记词")
-                            .primary()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                if let ViewState::CreateWallet { mnemonic, .. } = &this.view_state {
-                                    this.view_state = ViewState::CreateWallet {
-                                        mnemonic: mnemonic.clone(),
-                                        step: CreateWalletStep::SetPassword,
-                                    };
-                                    cx.notify();
-                                }
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("continue")
+                                .label("我已保存助记词")
+                                .primary()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    if let ViewState::CreateWallet { mnemonic, .. } = &this.view_state {
+                                        this.view_state = ViewState::CreateWallet {
+                                            mnemonic: mnemonic.clone(),
+                                            step: CreateWalletStep::SetPassword,
+                                        };
+                                        cx.notify();
+                                    }
+                                })),
+                            true
+                        )
                     )
             )
     }
@@ -1263,16 +1303,19 @@ impl MainWindow {
                     )
             )
             .child(
-                Button::new("continue-to-dashboard")
-                    .label("进入钱包")
-                    .primary()
-                    .on_click(cx.listener(|this, _, _window, cx| {
-                        // 使用默认值保存钱包
-                        this.wallet_name = "我的钱包".into();
-                        this.password = "password123".into();
-                        this.confirm_password = "password123".into();
-                        this.save_wallet(cx);
-                    }))
+                self.wrap_button_with_theme(
+                    Button::new("continue-to-dashboard")
+                        .label("进入钱包")
+                        .primary()
+                        .on_click(cx.listener(|this, _, _window, cx| {
+                            // 使用默认值保存钱包
+                            this.wallet_name = "我的钱包".into();
+                            this.password = "password123".into();
+                            this.confirm_password = "password123".into();
+                            this.save_wallet(cx);
+                        })),
+                    true
+                )
             )
     }
 
@@ -1305,30 +1348,36 @@ impl MainWindow {
                     .gap_4()
                     .mb(px(20.0))
                     .child(
-                        Button::new("import-type-mnemonic")
-                            .label("助记词")
-                            .when(self.import_type == ImportType::Mnemonic, |b| b.primary())
-                            .when(self.import_type != ImportType::Mnemonic, |b| b.ghost())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.import_type = ImportType::Mnemonic;
-                                this.import_focused_field = Some(ImportField::Mnemonic);
-                                // 清空私钥
-                                this.import_private_key = SharedString::default();
-                                cx.notify();
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("import-type-mnemonic")
+                                .label("助记词")
+                                .when(self.import_type == ImportType::Mnemonic, |b| b.primary())
+                                .when(self.import_type != ImportType::Mnemonic, |b| b.ghost())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.import_type = ImportType::Mnemonic;
+                                    this.import_focused_field = Some(ImportField::Mnemonic);
+                                    // 清空私钥
+                                    this.import_private_key = SharedString::default();
+                                    cx.notify();
+                                })),
+                            self.import_type == ImportType::Mnemonic
+                        )
                     )
                     .child(
-                        Button::new("import-type-private-key")
-                            .label("私钥")
-                            .when(self.import_type == ImportType::PrivateKey, |b| b.primary())
-                            .when(self.import_type != ImportType::PrivateKey, |b| b.ghost())
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.import_type = ImportType::PrivateKey;
-                                this.import_focused_field = Some(ImportField::PrivateKey);
-                                // 清空助记词
-                                this.import_mnemonic = SharedString::default();
-                                cx.notify();
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("import-type-private-key")
+                                .label("私钥")
+                                .when(self.import_type == ImportType::PrivateKey, |b| b.primary())
+                                .when(self.import_type != ImportType::PrivateKey, |b| b.ghost())
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.import_type = ImportType::PrivateKey;
+                                    this.import_focused_field = Some(ImportField::PrivateKey);
+                                    // 清空助记词
+                                    this.import_mnemonic = SharedString::default();
+                                    cx.notify();
+                                })),
+                            self.import_type == ImportType::PrivateKey
+                        )
                     )
             )
             .child(
@@ -1477,29 +1526,35 @@ impl MainWindow {
                     .flex()
                     .gap_4()
                     .child(
-                        Button::new("back")
-                            .label("返回")
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                // 清空输入
-                                this.import_mnemonic = SharedString::default();
-                                this.import_private_key = SharedString::default();
-                                this.import_wallet_name = SharedString::default();
-                                this.import_password = SharedString::default();
-                                this.import_confirm_password = SharedString::default();
-                                this.import_error = None;
-                                this.import_focused_field = None;
-                                this.view_state = ViewState::Welcome;
-                                cx.notify();
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("back")
+                                .label("返回")
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    // 清空输入
+                                    this.import_mnemonic = SharedString::default();
+                                    this.import_private_key = SharedString::default();
+                                    this.import_wallet_name = SharedString::default();
+                                    this.import_password = SharedString::default();
+                                    this.import_confirm_password = SharedString::default();
+                                    this.import_error = None;
+                                    this.import_focused_field = None;
+                                    this.view_state = ViewState::Welcome;
+                                    cx.notify();
+                                })),
+                            false
+                        )
                     )
                     .child(
-                        Button::new("import")
-                            .label("导入钱包")
-                            .primary()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                this.process_import_wallet(cx);
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("import")
+                                .label("导入钱包")
+                                .primary()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    this.process_import_wallet(cx);
+                                })),
+                            true
+                        )
                     )
             )
     }
@@ -1540,63 +1595,75 @@ impl MainWindow {
                                     .flex()
                                     .gap_2()
                                     .child(
-                                        if self.current_network == SolanaNetwork::Mainnet {
-                                            Button::new("network-mainnet")
-                                                .label("主网")
-                                                .primary()
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.switch_network(SolanaNetwork::Mainnet, cx);
-                                                }))
-                                        } else {
-                                            Button::new("network-mainnet")
-                                                .label("主网")
-                                                .ghost()
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.switch_network(SolanaNetwork::Mainnet, cx);
-                                                }))
-                                        }
+                                        self.wrap_button_with_theme(
+                                            if self.current_network == SolanaNetwork::Mainnet {
+                                                Button::new("network-mainnet")
+                                                    .label("主网")
+                                                    .primary()
+                                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                                        this.switch_network(SolanaNetwork::Mainnet, cx);
+                                                    }))
+                                            } else {
+                                                Button::new("network-mainnet")
+                                                    .label("主网")
+                                                    .ghost()
+                                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                                        this.switch_network(SolanaNetwork::Mainnet, cx);
+                                                    }))
+                                            },
+                                            self.current_network == SolanaNetwork::Mainnet
+                                        )
                                     )
                                     .child(
-                                        if self.current_network == SolanaNetwork::Devnet {
-                                            Button::new("network-devnet")
-                                                .label("开发网")
-                                                .primary()
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.switch_network(SolanaNetwork::Devnet, cx);
-                                                }))
-                                        } else {
-                                            Button::new("network-devnet")
-                                                .label("开发网")
-                                                .ghost()
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.switch_network(SolanaNetwork::Devnet, cx);
-                                                }))
-                                        }
+                                        self.wrap_button_with_theme(
+                                            if self.current_network == SolanaNetwork::Devnet {
+                                                Button::new("network-devnet")
+                                                    .label("开发网")
+                                                    .primary()
+                                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                                        this.switch_network(SolanaNetwork::Devnet, cx);
+                                                    }))
+                                            } else {
+                                                Button::new("network-devnet")
+                                                    .label("开发网")
+                                                    .ghost()
+                                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                                        this.switch_network(SolanaNetwork::Devnet, cx);
+                                                    }))
+                                            },
+                                            self.current_network == SolanaNetwork::Devnet
+                                        )
                                     )
                                     .child(
-                                        if self.current_network == SolanaNetwork::Testnet {
-                                            Button::new("network-testnet")
-                                                .label("测试网")
-                                                .primary()
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.switch_network(SolanaNetwork::Testnet, cx);
-                                                }))
-                                        } else {
-                                            Button::new("network-testnet")
-                                                .label("测试网")
-                                                .ghost()
-                                                .on_click(cx.listener(|this, _, _window, cx| {
-                                                    this.switch_network(SolanaNetwork::Testnet, cx);
-                                                }))
-                                        }
+                                        self.wrap_button_with_theme(
+                                            if self.current_network == SolanaNetwork::Testnet {
+                                                Button::new("network-testnet")
+                                                    .label("测试网")
+                                                    .primary()
+                                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                                        this.switch_network(SolanaNetwork::Testnet, cx);
+                                                    }))
+                                            } else {
+                                                Button::new("network-testnet")
+                                                    .label("测试网")
+                                                    .ghost()
+                                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                                        this.switch_network(SolanaNetwork::Testnet, cx);
+                                                    }))
+                                            },
+                                            self.current_network == SolanaNetwork::Testnet
+                                        )
                                     )
                                     .child(
-                                        Button::new("rpc-config")
-                                            .label("⚙️")
-                                            .ghost()
-                                            .on_click(cx.listener(|this, _, _window, cx| {
-                                                this.show_rpc_config_dialog(cx);
-                                            }))
+                                        self.wrap_button_with_theme(
+                                            Button::new("rpc-config")
+                                                .label("⚙️")
+                                                .ghost()
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.show_rpc_config_dialog(cx);
+                                                })),
+                                            false
+                                        )
                                     )
                             )
                     )
@@ -1625,13 +1692,16 @@ impl MainWindow {
                                     .child(account.name.clone())
                             )
                             .child(
-                                Button::new("copy-address")
-                                    .label("复制地址")
-                                    .ghost()
-                                    .on_click(cx.listener(move |_, _, _window, _cx| {
-                                        // TODO: 实现复制功能
-                                        println!("复制地址");
-                                    }))
+                                self.wrap_button_with_theme(
+                                    Button::new("copy-address")
+                                        .label("复制地址")
+                                        .ghost()
+                                        .on_click(cx.listener(move |_, _, _window, _cx| {
+                                            // TODO: 实现复制功能
+                                            println!("复制地址");
+                                        })),
+                                    false
+                                )
                             )
                     )
                     .child(
@@ -1705,49 +1775,64 @@ impl MainWindow {
                     .gap_3()
                     .w_full()
                     .child(
-                        Button::new("send")
-                            .label("发送")
-                            .primary()
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                if let ViewState::Dashboard { account_index } = this.view_state {
-                                    this.view_state = ViewState::SendTransaction { account_index };
-                                    cx.notify();
-                                }
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("send")
+                                .label("发送")
+                                .primary()
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    if let ViewState::Dashboard { account_index } = this.view_state {
+                                        this.view_state = ViewState::SendTransaction { account_index };
+                                        cx.notify();
+                                    }
+                                })),
+                            true
+                        )
                     )
                     .child(
-                        Button::new("receive")
-                            .label("接收")
-                            .ghost()
-                            .on_click(cx.listener(|_, _, _window, _cx| {
-                                println!("接收功能待实现");
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("receive")
+                                .label("接收")
+                                .ghost()
+                                .on_click(cx.listener(|_, _, _window, _cx| {
+                                    println!("接收功能待实现");
+                                })),
+                            false
+                        )
                     )
                     .child(
-                        Button::new("refresh")
-                            .label("刷新余额")
-                            .ghost()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                if let ViewState::Dashboard { account_index } = this.view_state {
-                                    this.fetch_balance(account_index, cx);
-                                }
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("refresh")
+                                .label("刷新余额")
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    if let ViewState::Dashboard { account_index } = this.view_state {
+                                        this.fetch_balance(account_index, cx);
+                                    }
+                                })),
+                            false
+                        )
                     )
                     .child(
                         if self.current_network != SolanaNetwork::Mainnet {
-                            Button::new("airdrop")
-                                .label(if self.requesting_airdrop { "请求中..." } else { "🪂 空投" })
-                                .ghost()
-                                .on_click(cx.listener(|this, _, _window, cx| {
-                                    if !this.requesting_airdrop {
-                                        this.request_airdrop(cx);
-                                    }
-                                }))
+                            self.wrap_button_with_theme(
+                                Button::new("airdrop")
+                                    .label(if self.requesting_airdrop { "请求中..." } else { "🪂 空投" })
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _window, cx| {
+                                        if !this.requesting_airdrop {
+                                            this.request_airdrop(cx);
+                                        }
+                                    })),
+                                false
+                            )
                         } else {
-                            Button::new("airdrop-disabled")
-                                .label("空投(仅测试网)")
-                                .ghost()
-                                .on_click(cx.listener(|_, _, _window, _cx| {}))
+                            self.wrap_button_with_theme(
+                                Button::new("airdrop-disabled")
+                                    .label("空投(仅测试网)")
+                                    .ghost()
+                                    .on_click(cx.listener(|_, _, _window, _cx| {})),
+                                false
+                            )
                         }
                     )
             )
@@ -1806,19 +1891,22 @@ impl MainWindow {
                             .child("发送 SOL")
                     )
                     .child(
-                        Button::new("back-to-dashboard")
-                            .label("返回")
-                            .ghost()
-                            .on_click(cx.listener(move |this, _, _window, cx| {
-                                if let ViewState::SendTransaction { account_index } = this.view_state {
-                                    this.view_state = ViewState::Dashboard { account_index };
-                                    // 清空输入
-                                    this.send_to_address = SharedString::default();
-                                    this.send_amount = SharedString::default();
-                                    this.send_error = None;
-                                    cx.notify();
-                                }
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("back-to-dashboard")
+                                .label("返回")
+                                .ghost()
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    if let ViewState::SendTransaction { account_index } = this.view_state {
+                                        this.view_state = ViewState::Dashboard { account_index };
+                                        // 清空输入
+                                        this.send_to_address = SharedString::default();
+                                        this.send_amount = SharedString::default();
+                                        this.send_error = None;
+                                        cx.notify();
+                                    }
+                                })),
+                            false
+                        )
                     )
             )
             .child(
@@ -1911,7 +1999,11 @@ impl MainWindow {
                                     .items_center()
                                     .child(
                                         div()
-                                            .text_color(self.theme.text_primary)
+                                            .text_color(if self.send_to_address.is_empty() {
+                                                self.theme.text_disabled
+                                            } else {
+                                                self.theme.text_primary
+                                            })
                                             .child(
                                                 if self.send_to_address.is_empty() {
                                                     "输入接收地址...".to_string()
@@ -1948,7 +2040,11 @@ impl MainWindow {
                                     .justify_between()
                                     .child(
                                         div()
-                                            .text_color(self.theme.text_primary)
+                                            .text_color(if self.send_amount.is_empty() {
+                                                self.theme.text_disabled
+                                            } else {
+                                                self.theme.text_primary
+                                            })
                                             .child(
                                                 if self.send_amount.is_empty() {
                                                     "0.00".to_string()
@@ -2002,14 +2098,17 @@ impl MainWindow {
                     .justify_center()
                     .w_full()
                     .child(
-                        Button::new("confirm-send")
-                            .label(if self.sending_transaction { "发送中..." } else { "确认发送" })
-                            .primary()
-                            .on_click(cx.listener(|this, _, _window, cx| {
-                                if !this.sending_transaction {
-                                    this.process_send_transaction(cx);
-                                }
-                            }))
+                        self.wrap_button_with_theme(
+                            Button::new("confirm-send")
+                                .label(if self.sending_transaction { "发送中..." } else { "确认发送" })
+                                .primary()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    if !this.sending_transaction {
+                                        this.process_send_transaction(cx);
+                                    }
+                                })),
+                            true
+                        )
                     )
             )
     }

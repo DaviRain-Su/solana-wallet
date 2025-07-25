@@ -27,17 +27,17 @@ impl Theme {
         Self {
             mode: ThemeMode::Light,
             background: rgb(0xffffff),
-            surface: rgb(0xf5f5f5),
-            surface_hover: rgb(0xe8e8e8),
+            surface: rgb(0xfafafa),
+            surface_hover: rgb(0xf0f0f0),
             text_primary: rgb(0x1a1a1a),
-            text_secondary: rgb(0x666666),
-            text_disabled: rgb(0x999999),
-            border: rgb(0xe0e0e0),
+            text_secondary: rgb(0x4a4a4a),
+            text_disabled: rgb(0x9a9a9a),
+            border: rgb(0xd0d0d0),
             primary: rgb(0x9945ff),
-            primary_hover: rgb(0x8833ee),
-            success: rgb(0x00c853),
-            error: rgb(0xff3838),
-            warning: rgb(0xffa500),
+            primary_hover: rgb(0x7733dd),
+            success: rgb(0x00a547),
+            error: rgb(0xe53935),
+            warning: rgb(0xff9800),
         }
     }
 
