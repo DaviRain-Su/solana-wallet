@@ -3,7 +3,7 @@ use anyhow::{Result, anyhow};
 use crate::wallet::keypair::{WalletKeypair, DerivedKeypair};
 
 /// Represents a mnemonic phrase for wallet generation
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MnemonicPhrase {
     mnemonic: Mnemonic,
 }

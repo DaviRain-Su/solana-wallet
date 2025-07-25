@@ -13,6 +13,15 @@ use theme::{Theme, ThemeMode};
 
 actions!(wallet, [Quit, CreateWallet, ImportWallet]);
 
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum ImportField {
+    Mnemonic,
+    WalletName,
+    Password,
+    ConfirmPassword,
+}
+
+#[derive(Clone, PartialEq)]
 enum ViewState {
     Welcome,
     CreateWallet { 
@@ -51,25 +60,48 @@ struct MainWindow {
     import_password: SharedString,
     import_confirm_password: SharedString,
     import_error: Option<String>,
+    import_focused_field: Option<ImportField>,
     // 发送交易相关字段
     send_to_address: SharedString,
     send_amount: SharedString,
     send_error: Option<String>,
     sending_transaction: bool,
+    // 焦点处理
+    focus_handle: FocusHandle,
 }
 
 impl MainWindow {
     fn process_import_wallet(&mut self, cx: &mut Context<Self>) {
-        // 为了演示，使用预设的测试数据
-        let test_mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
-        let test_wallet_name = "导入的钱包";
-        let test_password = "password123";
-        
         // 清空错误
         self.import_error = None;
         
+        // 验证输入
+        if self.import_mnemonic.is_empty() {
+            self.import_error = Some("请输入助记词".to_string());
+            cx.notify();
+            return;
+        }
+        
+        if self.import_wallet_name.is_empty() {
+            self.import_error = Some("请输入钱包名称".to_string());
+            cx.notify();
+            return;
+        }
+        
+        if self.import_password.is_empty() {
+            self.import_error = Some("请输入密码".to_string());
+            cx.notify();
+            return;
+        }
+        
+        if self.import_password != self.import_confirm_password {
+            self.import_error = Some("两次密码输入不一致".to_string());
+            cx.notify();
+            return;
+        }
+        
         // 验证助记词
-        match MnemonicPhrase::from_phrase(test_mnemonic) {
+        match MnemonicPhrase::from_phrase(&self.import_mnemonic) {
             Ok(mnemonic) => {
                 if let Some(ref storage) = self.storage {
                     // 创建钱包数据
@@ -91,7 +123,7 @@ impl MainWindow {
                             wallet_data.accounts.push(account_data);
                             
                             // 保存钱包
-                            match storage.save_wallet(test_wallet_name, &wallet_data, test_password) {
+                            match storage.save_wallet(&self.import_wallet_name, &wallet_data, &self.import_password) {
                                 Ok(_) => {
                                     // 创建内存中的账户
                                     let account = WalletAccount::with_derivation_path(
@@ -129,7 +161,176 @@ impl MainWindow {
         }
     }
     
-    fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
+    fn render_input_field(
+        &self,
+        value: &SharedString,
+        placeholder: &str,
+        field: ImportField,
+        is_password: bool,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_focused = self.import_focused_field == Some(field);
+        let border_color = if is_focused {
+            self.theme.primary
+        } else {
+            self.theme.border
+        };
+        
+        // Show cursor when focused
+        let display_text = if value.is_empty() {
+            placeholder.to_string()
+        } else if is_password {
+            "•".repeat(value.len())
+        } else {
+            value.to_string()
+        };
+        
+        let display_with_cursor = if is_focused {
+            format!("{}_", display_text)
+        } else {
+            display_text
+        };
+        
+        div()
+            .w_full()
+            .h(px(40.0))
+            .px(px(12.0))
+            .bg(self.theme.surface)
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(border_color)
+            .flex()
+            .items_center()
+            .cursor_text()
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                this.import_focused_field = Some(field);
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .text_color(if value.is_empty() {
+                        self.theme.text_disabled
+                    } else {
+                        self.theme.text_primary
+                    })
+                    .child(display_with_cursor)
+            )
+    }
+    
+    fn render_textarea_field(
+        &self,
+        value: &SharedString,
+        placeholder: &str,
+        field: ImportField,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_focused = self.import_focused_field == Some(field);
+        let border_color = if is_focused {
+            self.theme.primary
+        } else {
+            self.theme.border
+        };
+        
+        // Show cursor when focused
+        let display_text = if value.is_empty() {
+            placeholder.to_string()
+        } else {
+            value.to_string()
+        };
+        
+        let display_with_cursor = if is_focused {
+            format!("{}_", display_text)
+        } else {
+            display_text
+        };
+        
+        div()
+            .w_full()
+            .h(px(100.0))
+            .p(px(12.0))
+            .bg(self.theme.surface)
+            .rounded(px(8.0))
+            .border_1()
+            .border_color(border_color)
+            .cursor_text()
+            .overflow_hidden()
+            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, cx| {
+                this.import_focused_field = Some(field);
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .text_color(if value.is_empty() {
+                        self.theme.text_disabled
+                    } else {
+                        self.theme.text_primary
+                    })
+                    .child(display_with_cursor)
+            )
+    }
+    
+    fn handle_import_key_event(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if self.view_state != ViewState::ImportWallet {
+            return;
+        }
+        
+        if let Some(field) = self.import_focused_field {
+            let keystroke = &event.keystroke;
+            // Get the field value to modify
+            let field_value = match field {
+                ImportField::Mnemonic => &mut self.import_mnemonic,
+                ImportField::WalletName => &mut self.import_wallet_name,
+                ImportField::Password => &mut self.import_password,
+                ImportField::ConfirmPassword => &mut self.import_confirm_password,
+            };
+            
+            // Handle different key inputs
+            match keystroke.key.as_str() {
+                "backspace" => {
+                    let mut val = field_value.to_string();
+                    val.pop();
+                    *field_value = val.into();
+                    cx.notify();
+                }
+                "tab" => {
+                    // Move to next field
+                    self.import_focused_field = Some(match field {
+                        ImportField::Mnemonic => ImportField::WalletName,
+                        ImportField::WalletName => ImportField::Password,
+                        ImportField::Password => ImportField::ConfirmPassword,
+                        ImportField::ConfirmPassword => ImportField::Mnemonic,
+                    });
+                    cx.notify();
+                }
+                "escape" => {
+                    // Clear focus
+                    self.import_focused_field = None;
+                    cx.notify();
+                }
+                "enter" => {
+                    // Submit form if on last field
+                    if field == ImportField::ConfirmPassword {
+                        self.process_import_wallet(cx);
+                    }
+                }
+                key => {
+                    // Handle regular character input
+                    if key.len() == 1 {
+                        let new_val = format!("{}{}", field_value, key);
+                        *field_value = new_val.into();
+                        cx.notify();
+                    } else if key == "space" {
+                        // Handle space key
+                        let new_val = format!("{} ", field_value);
+                        *field_value = new_val.into();
+                        cx.notify();
+                    }
+                }
+            }
+        }
+    }
+    
+    fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         println!("Creating MainWindow...");
         
         let storage = WalletStorage::default_path()
@@ -142,6 +343,8 @@ impl MainWindow {
         let current_network = SolanaNetwork::Devnet;
         let rpc_manager = Arc::new(RpcManager::new(current_network));
         println!("RPC manager created for Devnet");
+        
+        let focus_handle = cx.focus_handle();
         
         Self {
             view_state: ViewState::Welcome,
@@ -163,10 +366,12 @@ impl MainWindow {
             import_password: SharedString::default(),
             import_confirm_password: SharedString::default(),
             import_error: None,
+            import_focused_field: None,
             send_to_address: SharedString::default(),
             send_amount: SharedString::default(),
             send_error: None,
             sending_transaction: false,
+            focus_handle,
         }
     }
 
@@ -184,8 +389,10 @@ impl MainWindow {
         }
     }
 
-    fn import_wallet(&mut self, _cx: &mut Context<Self>) {
+    fn import_wallet(&mut self, cx: &mut Context<Self>) {
         self.view_state = ViewState::ImportWallet;
+        self.import_focused_field = Some(ImportField::Mnemonic);
+        // Focus will be set when user clicks on an input field
     }
     
     fn save_wallet(&mut self, cx: &mut Context<Self>) {
@@ -392,17 +599,29 @@ impl MainWindow {
     }
 }
 
+impl Focusable for MainWindow {
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus_handle.clone()
+    }
+}
+
 impl Render for MainWindow {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Force window to front
-        _window.activate_window();
+        window.activate_window();
         
         // 检查余额更新
         self.check_balance_update(cx);
         
+        
         div()
             .flex()
             .flex_col()
+            .key_context("ImportWallet")
+            .track_focus(&self.focus_handle)
+            .on_key_down(cx.listener(|this, event, _, cx| {
+                this.handle_import_key_event(event, cx);
+            }))
             .size_full()
             .bg(self.theme.background)
             .child(
@@ -686,6 +905,13 @@ impl MainWindow {
             .justify_center()
             .gap_6()
             .p(px(20.0))
+            .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
+                // Set initial focus to mnemonic field if nothing is focused
+                if this.import_focused_field.is_none() {
+                    this.import_focused_field = Some(ImportField::Mnemonic);
+                    cx.notify();
+                }
+            }))
             .child(
                 div()
                     .text_2xl()
@@ -719,19 +945,12 @@ impl MainWindow {
                                     .child("助记词")
                             )
                             .child(
-                                div()
-                                    .w_full()
-                                    .h(px(100.0))
-                                    .p(px(12.0))
-                                    .bg(self.theme.surface)
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(self.theme.border)
-                                    .child(
-                                        div()
-                                            .text_color(self.theme.text_primary)
-                                            .child(self.import_mnemonic.to_string())
-                                    )
+                                self.render_textarea_field(
+                                    &self.import_mnemonic,
+                                    "输入您的12个或者更多助记词...",
+                                    ImportField::Mnemonic,
+                                    cx
+                                )
                             )
                     )
                     .child(
@@ -747,21 +966,13 @@ impl MainWindow {
                                     .child("钱包名称")
                             )
                             .child(
-                                div()
-                                    .w_full()
-                                    .h(px(40.0))
-                                    .px(px(12.0))
-                                    .bg(self.theme.surface)
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(self.theme.border)
-                                    .flex()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .text_color(self.theme.text_primary)
-                                            .child(self.import_wallet_name.to_string())
-                                    )
+                                self.render_input_field(
+                                    &self.import_wallet_name,
+                                    "输入钱包名称...",
+                                    ImportField::WalletName,
+                                    false,
+                                    cx
+                                )
                             )
                     )
                     .child(
@@ -777,21 +988,13 @@ impl MainWindow {
                                     .child("密码")
                             )
                             .child(
-                                div()
-                                    .w_full()
-                                    .h(px(40.0))
-                                    .px(px(12.0))
-                                    .bg(self.theme.surface)
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(self.theme.border)
-                                    .flex()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .text_color(self.theme.text_primary)
-                                            .child("••••••••")
-                                    )
+                                self.render_input_field(
+                                    &self.import_password,
+                                    "输入密码...",
+                                    ImportField::Password,
+                                    true,
+                                    cx
+                                )
                             )
                     )
                     .child(
@@ -807,21 +1010,13 @@ impl MainWindow {
                                     .child("确认密码")
                             )
                             .child(
-                                div()
-                                    .w_full()
-                                    .h(px(40.0))
-                                    .px(px(12.0))
-                                    .bg(self.theme.surface)
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(self.theme.border)
-                                    .flex()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .text_color(self.theme.text_primary)
-                                            .child("••••••••")
-                                    )
+                                self.render_input_field(
+                                    &self.import_confirm_password,
+                                    "确认密码...",
+                                    ImportField::ConfirmPassword,
+                                    true,
+                                    cx
+                                )
                             )
                     )
             )
@@ -831,6 +1026,7 @@ impl MainWindow {
                     div()
                         .text_sm()
                         .text_color(self.theme.error)
+                        .mt(px(10.0))
                         .child(error.clone())
                 } else {
                     div()
@@ -852,6 +1048,7 @@ impl MainWindow {
                                 this.import_password = SharedString::default();
                                 this.import_confirm_password = SharedString::default();
                                 this.import_error = None;
+                                this.import_focused_field = None;
                                 this.view_state = ViewState::Welcome;
                                 cx.notify();
                             }))
