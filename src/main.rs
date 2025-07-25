@@ -1,7 +1,6 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use std::sync::Arc;
-
 mod wallet;
 mod app;
 mod theme;
@@ -41,6 +40,10 @@ struct MainWindow {
     balance: Option<f64>,
     loading_balance: bool,
     theme: Theme,
+    current_network: SolanaNetwork,
+    show_network_selector: bool,
+    requesting_airdrop: bool,
+    pending_balance_update: Option<std::sync::mpsc::Receiver<Result<f64, anyhow::Error>>>,
 }
 
 impl MainWindow {
@@ -54,7 +57,8 @@ impl MainWindow {
                 WalletStorage::new(path).ok()
             });
         
-        let rpc_manager = Arc::new(RpcManager::new(SolanaNetwork::Devnet));
+        let current_network = SolanaNetwork::Devnet;
+        let rpc_manager = Arc::new(RpcManager::new(current_network));
         println!("RPC manager created for Devnet");
         
         Self {
@@ -68,6 +72,10 @@ impl MainWindow {
             balance: None,
             loading_balance: false,
             theme: Theme::dark(),
+            current_network,
+            show_network_selector: false,
+            requesting_airdrop: false,
+            pending_balance_update: None,
         }
     }
 
@@ -170,15 +178,89 @@ impl MainWindow {
         cx.notify();
     }
 
-    fn fetch_balance(&mut self, account_index: usize, _cx: &mut Context<Self>) {
+    fn toggle_network_selector(&mut self, cx: &mut Context<Self>) {
+        self.show_network_selector = !self.show_network_selector;
+        cx.notify();
+    }
+
+    fn switch_network(&mut self, network: SolanaNetwork, cx: &mut Context<Self>) {
+        self.current_network = network;
+        self.show_network_selector = false;
+        
+        // 切换RPC网络
+        let rpc = self.rpc_manager.clone();
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                if let Err(e) = rpc.switch_network(network).await {
+                    println!("切换网络失败: {}", e);
+                } else {
+                    println!("成功切换到网络: {}", network.name());
+                }
+            });
+        });
+        
+        // 刷新余额
+        if let ViewState::Dashboard { account_index } = self.view_state {
+            self.fetch_balance(account_index, cx);
+        }
+        
+        cx.notify();
+    }
+
+    fn request_airdrop(&mut self, cx: &mut Context<Self>) {
+        if let ViewState::Dashboard { account_index } = self.view_state {
+            if let Some(account) = self.accounts.get(account_index) {
+                let pubkey = account.pubkey;
+                let rpc = self.rpc_manager.clone();
+                
+                self.requesting_airdrop = true;
+                cx.notify();
+                
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async {
+                        // 请求 1 SOL 的空投
+                        let result = rpc.request_airdrop(&pubkey, 1_000_000_000).await;
+                        
+                        match &result {
+                            Ok(signature) => {
+                                println!("空投成功! 签名: {}", signature);
+                            }
+                            Err(e) => {
+                                println!("空投失败: {}", e);
+                            }
+                        }
+                    });
+                });
+                
+                // 5秒后重置状态
+                let account_idx = account_index;
+                std::thread::spawn(|| {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    // 状态会在下次用户交互时重置
+                });
+                
+                // 立即重置状态，让用户可以再次点击
+                self.requesting_airdrop = false;
+            }
+        }
+    }
+
+    fn fetch_balance(&mut self, account_index: usize, cx: &mut Context<Self>) {
         if let Some(account) = self.accounts.get(account_index) {
             let pubkey = account.pubkey;
             let rpc = self.rpc_manager.clone();
             
             self.loading_balance = true;
             self.balance = None;
+            cx.notify();
             
-            // 使用 std::thread 来运行异步任务，避免类型推断问题
+            // 创建通道来接收结果
+            let (tx, rx) = std::sync::mpsc::channel();
+            self.pending_balance_update = Some(rx);
+            
+            // 在后台线程中执行异步任务
             std::thread::spawn(move || {
                 let rt = tokio::runtime::Runtime::new().unwrap();
                 let balance_result = rt.block_on(async {
@@ -188,17 +270,33 @@ impl MainWindow {
                 match balance_result {
                     Ok(balance) => {
                         println!("获取余额成功: {} SOL", balance);
-                        // TODO: 需要一种方式来更新UI
                     }
-                    Err(e) => {
+                    Err(ref e) => {
                         println!("获取余额失败: {}", e);
                     }
                 }
+                
+                // 发送结果
+                let _ = tx.send(balance_result);
             });
-            
-            // 暂时使用假数据来测试UI
-            self.balance = Some(0.0);
-            self.loading_balance = false;
+        }
+    }
+    
+    fn check_balance_update(&mut self, cx: &mut Context<Self>) {
+        if let Some(rx) = &self.pending_balance_update {
+            if let Ok(result) = rx.try_recv() {
+                match result {
+                    Ok(balance) => {
+                        self.balance = Some(balance);
+                    }
+                    Err(_) => {
+                        self.balance = None;
+                    }
+                }
+                self.loading_balance = false;
+                self.pending_balance_update = None;
+                cx.notify();
+            }
         }
     }
 }
@@ -207,6 +305,9 @@ impl Render for MainWindow {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Force window to front
         _window.activate_window();
+        
+        // 检查余额更新
+        self.check_balance_update(cx);
         
         div()
             .flex()
@@ -531,7 +632,7 @@ impl MainWindow {
                     .child(
                         div()
                             .flex()
-                            .gap_2()
+                            .gap_3()
                             .items_center()
                             .child(
                                 div()
@@ -541,8 +642,59 @@ impl MainWindow {
                             )
                             .child(
                                 div()
-                                    .text_color(self.theme.success)
-                                    .child("Devnet")
+                                    .flex()
+                                    .gap_2()
+                                    .child(
+                                        if self.current_network == SolanaNetwork::Mainnet {
+                                            Button::new("network-mainnet")
+                                                .label("主网")
+                                                .primary()
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.switch_network(SolanaNetwork::Mainnet, cx);
+                                                }))
+                                        } else {
+                                            Button::new("network-mainnet")
+                                                .label("主网")
+                                                .ghost()
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.switch_network(SolanaNetwork::Mainnet, cx);
+                                                }))
+                                        }
+                                    )
+                                    .child(
+                                        if self.current_network == SolanaNetwork::Devnet {
+                                            Button::new("network-devnet")
+                                                .label("开发网")
+                                                .primary()
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.switch_network(SolanaNetwork::Devnet, cx);
+                                                }))
+                                        } else {
+                                            Button::new("network-devnet")
+                                                .label("开发网")
+                                                .ghost()
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.switch_network(SolanaNetwork::Devnet, cx);
+                                                }))
+                                        }
+                                    )
+                                    .child(
+                                        if self.current_network == SolanaNetwork::Testnet {
+                                            Button::new("network-testnet")
+                                                .label("测试网")
+                                                .primary()
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.switch_network(SolanaNetwork::Testnet, cx);
+                                                }))
+                                        } else {
+                                            Button::new("network-testnet")
+                                                .label("测试网")
+                                                .ghost()
+                                                .on_click(cx.listener(|this, _, _window, cx| {
+                                                    this.switch_network(SolanaNetwork::Testnet, cx);
+                                                }))
+                                        }
+                                    )
                             )
                     )
             )
@@ -674,6 +826,23 @@ impl MainWindow {
                                     this.fetch_balance(account_index, cx);
                                 }
                             }))
+                    )
+                    .child(
+                        if self.current_network != SolanaNetwork::Mainnet {
+                            Button::new("airdrop")
+                                .label(if self.requesting_airdrop { "请求中..." } else { "🪂 空投" })
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    if !this.requesting_airdrop {
+                                        this.request_airdrop(cx);
+                                    }
+                                }))
+                        } else {
+                            Button::new("airdrop-disabled")
+                                .label("空投(仅测试网)")
+                                .ghost()
+                                .on_click(cx.listener(|_, _, _window, _cx| {}))
+                        }
                     )
             )
             .child(
