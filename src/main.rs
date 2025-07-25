@@ -19,14 +19,22 @@ use wallet::{
 actions!(wallet, [Quit, CreateWallet, ImportWallet]);
 
 #[derive(Clone, Copy, PartialEq, Debug)]
-enum ImportField {
+enum InputField {
+    // Import fields
     Mnemonic,
     PrivateKey,
     WalletName,
     Password,
     ConfirmPassword,
     CustomRpcUrl,
+    // Send fields
+    SendToAddress,
+    SendAmount,
 }
+
+// Backwards compatibility
+type ImportField = InputField;
+type SendField = InputField;
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 enum ImportType {
@@ -84,7 +92,7 @@ struct MainWindow {
     import_password: SharedString,
     import_confirm_password: SharedString,
     import_error: Option<String>,
-    import_focused_field: Option<ImportField>,
+    import_focused_field: Option<InputField>,
     // 发送交易相关字段
     send_to_address: SharedString,
     send_amount: SharedString,
@@ -100,8 +108,8 @@ struct MainWindow {
     copy_success_timer: Option<Timer>,
 }
 
-fn is_password_field(field: ImportField) -> bool {
-    matches!(field, ImportField::Password | ImportField::ConfirmPassword)
+fn is_password_field(field: InputField) -> bool {
+    matches!(field, InputField::Password | InputField::ConfirmPassword)
 }
 
 impl MainWindow {
@@ -290,7 +298,7 @@ impl MainWindow {
         &self,
         value: &SharedString,
         placeholder: &str,
-        field: ImportField,
+        field: InputField,
         is_password: bool,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
@@ -400,27 +408,134 @@ impl MainWindow {
             )
     }
 
-    fn handle_import_key_event(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+    fn handle_key_event(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
         // Handle RPC config dialog keyboard events
         if self.show_rpc_config && self.rpc_focused {
             self.handle_rpc_key_event(event, cx);
             return;
         }
 
-        if self.view_state != ViewState::ImportWallet {
-            return;
+        // Handle different views
+        match &self.view_state {
+            ViewState::ImportWallet => self.handle_import_key_event(event, cx),
+            ViewState::SendTransaction { .. } => self.handle_send_key_event(event, cx),
+            _ => {}
         }
+    }
+
+    fn handle_send_key_event(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
+        if let Some(field) = self.import_focused_field {
+            let keystroke = &event.keystroke;
+            
+            // Get the field value to modify
+            let field_value = match field {
+                InputField::SendToAddress => &mut self.send_to_address,
+                InputField::SendAmount => &mut self.send_amount,
+                _ => return, // Import fields handled elsewhere
+            };
+
+            // Check for copy/paste commands
+            let is_cmd_or_ctrl = if cfg!(target_os = "macos") {
+                keystroke.modifiers.platform
+            } else {
+                keystroke.modifiers.control
+            };
+
+            if is_cmd_or_ctrl {
+                match keystroke.key.as_str() {
+                    "c" => {
+                        // Copy current field value to clipboard
+                        if !field_value.is_empty() {
+                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                field_value.to_string(),
+                            ));
+                        }
+                        return;
+                    }
+                    "v" => {
+                        // Paste from clipboard
+                        if let Some(clipboard_text) = cx.read_from_clipboard() {
+                            if let Some(text) = clipboard_text.text() {
+                                *field_value = text.trim().to_string().into();
+                                cx.notify();
+                            }
+                        }
+                        return;
+                    }
+                    "a" => {
+                        // Select all
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Handle different key inputs
+            match keystroke.key.as_str() {
+                "backspace" => {
+                    let mut val = field_value.to_string();
+                    val.pop();
+                    *field_value = val.into();
+                    cx.notify();
+                }
+                "tab" => {
+                    // Move between address and amount fields
+                    self.import_focused_field = Some(match field {
+                        InputField::SendToAddress => InputField::SendAmount,
+                        InputField::SendAmount => InputField::SendToAddress,
+                        _ => field,
+                    });
+                    cx.notify();
+                }
+                "escape" => {
+                    // Clear focus
+                    self.import_focused_field = None;
+                    cx.notify();
+                }
+                "enter" => {
+                    // Submit transaction if on amount field
+                    if field == InputField::SendAmount && !self.sending_transaction {
+                        self.process_send_transaction(cx);
+                    }
+                }
+                key => {
+                    if key.len() == 1 {
+                        let c = key.chars().next().unwrap();
+                        
+                        // For amount field, only allow numbers and decimal point
+                        if field == InputField::SendAmount {
+                            if c.is_numeric() || (c == '.' && !field_value.contains('.')) {
+                                let mut val = field_value.to_string();
+                                val.push(c);
+                                *field_value = val.into();
+                                cx.notify();
+                            }
+                        } else {
+                            // For address field, allow all characters
+                            let mut val = field_value.to_string();
+                            val.push(c);
+                            *field_value = val.into();
+                            cx.notify();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_import_key_event(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) {
 
         if let Some(field) = self.import_focused_field {
             let keystroke = &event.keystroke;
             // Get the field value to modify
             let field_value = match field {
-                ImportField::Mnemonic => &mut self.import_mnemonic,
-                ImportField::PrivateKey => &mut self.import_private_key,
-                ImportField::WalletName => &mut self.import_wallet_name,
-                ImportField::Password => &mut self.import_password,
-                ImportField::ConfirmPassword => &mut self.import_confirm_password,
-                ImportField::CustomRpcUrl => return, // Handled separately
+                InputField::Mnemonic => &mut self.import_mnemonic,
+                InputField::PrivateKey => &mut self.import_private_key,
+                InputField::WalletName => &mut self.import_wallet_name,
+                InputField::Password => &mut self.import_password,
+                InputField::ConfirmPassword => &mut self.import_confirm_password,
+                InputField::CustomRpcUrl => return, // Handled separately
+                _ => return, // Send fields handled elsewhere
             };
 
             // Check for copy/paste commands
@@ -446,7 +561,7 @@ impl MainWindow {
                         if let Some(clipboard_text) = cx.read_from_clipboard() {
                             if let Some(text) = clipboard_text.text() {
                                 // Clean the text by trimming whitespace for private key field
-                                let cleaned_text = if field == ImportField::PrivateKey {
+                                let cleaned_text = if field == InputField::PrivateKey {
                                     text.trim().to_string()
                                 } else {
                                     text.to_string()
@@ -477,18 +592,19 @@ impl MainWindow {
                 "tab" => {
                     // Move to next field
                     self.import_focused_field = Some(match field {
-                        ImportField::Mnemonic => ImportField::WalletName,
-                        ImportField::PrivateKey => ImportField::WalletName,
-                        ImportField::WalletName => ImportField::Password,
-                        ImportField::Password => ImportField::ConfirmPassword,
-                        ImportField::ConfirmPassword => {
+                        InputField::Mnemonic => InputField::WalletName,
+                        InputField::PrivateKey => InputField::WalletName,
+                        InputField::WalletName => InputField::Password,
+                        InputField::Password => InputField::ConfirmPassword,
+                        InputField::ConfirmPassword => {
                             if self.import_type == ImportType::Mnemonic {
-                                ImportField::Mnemonic
+                                InputField::Mnemonic
                             } else {
-                                ImportField::PrivateKey
+                                InputField::PrivateKey
                             }
                         }
-                        ImportField::CustomRpcUrl => ImportField::CustomRpcUrl,
+                        InputField::CustomRpcUrl => InputField::CustomRpcUrl,
+                        _ => field, // Keep same field for others
                     });
                     cx.notify();
                 }
@@ -499,7 +615,7 @@ impl MainWindow {
                 }
                 "enter" => {
                     // Submit form if on last field
-                    if field == ImportField::ConfirmPassword {
+                    if field == InputField::ConfirmPassword {
                         self.process_import_wallet(cx);
                     }
                 }
@@ -856,7 +972,7 @@ impl Render for MainWindow {
             .key_context("ImportWallet")
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(|this, event, _, cx| {
-                this.handle_import_key_event(event, cx);
+                this.handle_key_event(event, cx);
             }))
             .size_full()
             .bg(self.theme.background)
@@ -2092,31 +2208,13 @@ impl MainWindow {
                                     .text_color(self.theme.text_secondary)
                                     .child("接收地址"),
                             )
-                            .child(
-                                div()
-                                    .w_full()
-                                    .h(px(40.0))
-                                    .px(px(12.0))
-                                    .bg(self.theme.surface)
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(self.theme.border)
-                                    .flex()
-                                    .items_center()
-                                    .child(
-                                        div()
-                                            .text_color(if self.send_to_address.is_empty() {
-                                                self.theme.text_disabled
-                                            } else {
-                                                self.theme.text_primary
-                                            })
-                                            .child(if self.send_to_address.is_empty() {
-                                                "输入接收地址...".to_string()
-                                            } else {
-                                                self.send_to_address.to_string()
-                                            }),
-                                    ),
-                            ),
+                            .child(self.render_input_field(
+                                &self.send_to_address,
+                                "输入接收地址...",
+                                InputField::SendToAddress,
+                                false,
+                                cx,
+                            )),
                     )
                     .child(
                         // 金额输入
@@ -2132,31 +2230,25 @@ impl MainWindow {
                             )
                             .child(
                                 div()
-                                    .w_full()
-                                    .h(px(40.0))
-                                    .px(px(12.0))
-                                    .bg(self.theme.surface)
-                                    .rounded(px(8.0))
-                                    .border_1()
-                                    .border_color(self.theme.border)
                                     .flex()
                                     .items_center()
-                                    .justify_between()
+                                    .gap_2()
                                     .child(
                                         div()
-                                            .text_color(if self.send_amount.is_empty() {
-                                                self.theme.text_disabled
-                                            } else {
-                                                self.theme.text_primary
-                                            })
-                                            .child(if self.send_amount.is_empty() {
-                                                "0.00".to_string()
-                                            } else {
-                                                self.send_amount.to_string()
-                                            }),
+                                            .flex_1()
+                                            .child(self.render_input_field(
+                                                &self.send_amount,
+                                                "0.00",
+                                                InputField::SendAmount,
+                                                false,
+                                                cx,
+                                            )),
                                     )
                                     .child(
-                                        div().text_color(self.theme.text_secondary).child("SOL"),
+                                        div()
+                                            .text_color(self.theme.text_secondary)
+                                            .pr(px(12.0))
+                                            .child("SOL"),
                                     ),
                             ),
                     )
@@ -2249,18 +2341,55 @@ impl MainWindow {
         account: &WalletAccount,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        use qrcode::{QrCode, render::svg};
+        use qrcode::QrCode;
         
         // Generate QR code for the wallet address
         let address = account.pubkey.to_string();
         let qr_code = QrCode::new(&address).unwrap_or_else(|_| QrCode::new("ERROR").unwrap());
         
-        // Convert QR code to SVG string
-        let qr_svg = qr_code.render::<svg::Color>()
-            .min_dimensions(200, 200)
-            .dark_color(svg::Color("#000000"))
-            .light_color(svg::Color("#FFFFFF"))
-            .build();
+        // Convert QR code to text representation using Unicode blocks
+        let qr_modules = qr_code.to_colors();
+        let size = qr_code.width();
+        
+        // Create a grid of divs to represent QR code
+        let mut qr_rows = Vec::new();
+        
+        // Add white border around QR code
+        let border_size = 2;
+        let total_size = size + (border_size * 2);
+        
+        for y in 0..total_size {
+            let mut row_cells = Vec::new();
+            
+            for x in 0..total_size {
+                // Check if we're in the border area
+                let is_border = x < border_size || x >= size + border_size || 
+                               y < border_size || y >= size + border_size;
+                
+                let is_dark = if is_border {
+                    false // Border is always white
+                } else {
+                    let qr_x = x - border_size;
+                    let qr_y = y - border_size;
+                    let idx = qr_y * size + qr_x;
+                    qr_modules[idx] == qrcode::Color::Dark
+                };
+                
+                let cell = div()
+                    .w(px(5.0))
+                    .h(px(5.0))
+                    .bg(if is_dark { rgb(0x000000) } else { rgb(0xFFFFFF) });
+                
+                row_cells.push(cell);
+            }
+            
+            let row = div()
+                .flex()
+                .flex_row()
+                .children(row_cells);
+            
+            qr_rows.push(row);
+        }
         
         div()
             .flex()
@@ -2313,21 +2442,19 @@ impl MainWindow {
                     .rounded(px(12.0))
                     .p(px(24.0))
                     .child(
-                        // QR Code placeholder (since we can't render actual QR in GPUI yet)
+                        // QR Code display using grid of divs
                         div()
-                            .size(px(200.0))
+                            .p(px(16.0))
                             .bg(rgb(0xffffff))
                             .rounded(px(8.0))
                             .border_1()
                             .border_color(self.theme.border)
-                            .flex()
-                            .items_center()
-                            .justify_center()
                             .child(
                                 div()
-                                    .text_color(rgb(0x666666))
-                                    .text_center()
-                                    .child("QR Code")
+                                    .flex()
+                                    .flex_col()
+                                    .gap_0()
+                                    .children(qr_rows)
                             ),
                     )
                     .child(
