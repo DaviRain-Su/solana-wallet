@@ -14,6 +14,7 @@ use theme::{Theme, ThemeMode};
 use wallet::{
     generate_mnemonic, AccountData, MnemonicPhrase, RpcManager, SolanaNetwork, WalletAccount,
     WalletData, WalletKeypair, WalletStorage, TransactionRecord, TransactionStatus,
+    SigningRequest, SigningRequestManager, SigningRequestSource, SigningRequestStatus,
 };
 
 actions!(wallet, [Quit, CreateWallet, ImportWallet]);
@@ -57,6 +58,9 @@ enum ViewState {
         account_index: usize,
     },
     ReceiveTransaction {
+        account_index: usize,
+    },
+    TransactionHistory {
         account_index: usize,
     },
 }
@@ -109,6 +113,10 @@ struct MainWindow {
     copy_success_timer: Option<Timer>,
     // 交易历史记录
     transaction_history: Vec<wallet::TransactionRecord>,
+    // 签名请求管理
+    signing_request_manager: SigningRequestManager,
+    show_signing_request: bool,
+    current_signing_request: Option<String>,
 }
 
 fn is_password_field(field: InputField) -> bool {
@@ -699,6 +707,9 @@ impl MainWindow {
             show_copy_success: false,
             copy_success_timer: None,
             transaction_history: Vec::new(),
+            signing_request_manager: SigningRequestManager::new(),
+            show_signing_request: false,
+            current_signing_request: None,
         }
     }
 
@@ -1109,10 +1120,22 @@ impl Render for MainWindow {
                                 div().size_full().child(self.render_welcome_content(cx))
                             }
                         }
+                        ViewState::TransactionHistory { account_index } => {
+                            if let Some(account) = self.accounts.get(*account_index) {
+                                div()
+                                    .size_full()
+                                    .child(self.render_transaction_history_content(account, cx))
+                            } else {
+                                div().size_full().child(self.render_welcome_content(cx))
+                            }
+                        }
                     }),
             )
             .when(self.show_rpc_config, |this| {
                 this.child(self.render_rpc_config_dialog(cx))
+            })
+            .when(self.show_signing_request, |this| {
+                this.child(self.render_signing_request_dialog(cx))
             })
     }
 }
@@ -2088,6 +2111,34 @@ impl MainWindow {
                             cx,
                         ),
                     )
+                    .child(
+                        self.wrap_button_with_theme(
+                            Button::new("test-signing")
+                                .label("测试签名")
+                                .ghost()
+                                .on_click(cx.listener(|this, _, _window, cx| {
+                                    // 创建一个测试签名请求
+                                    this.create_test_signing_request(cx);
+                                })),
+                            false,
+                            cx,
+                        ),
+                    )
+                    .when(self.transaction_history.is_empty(), |parent| {
+                        parent.child(
+                            self.wrap_button_with_theme(
+                                Button::new("add-test-tx")
+                                    .label("添加测试交易")
+                                    .ghost()
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.add_test_transactions();
+                                        cx.notify();
+                                    })),
+                                false,
+                                cx,
+                            )
+                        )
+                    })
                     .child(if self.current_network != SolanaNetwork::Mainnet {
                         self.wrap_button_with_theme(
                             Button::new("airdrop")
@@ -2126,9 +2177,36 @@ impl MainWindow {
                     .gap_4()
                     .child(
                         div()
-                            .text_lg()
-                            .text_color(self.theme.text_primary)
-                            .child("交易历史"),
+                            .flex()
+                            .w_full()
+                            .items_center()
+                            .justify_between()
+                            .child(
+                                div()
+                                    .text_lg()
+                                    .text_color(self.theme.text_primary)
+                                    .child("最近交易"),
+                            )
+                            .child(
+                                if !self.transaction_history.is_empty() {
+                                    self.wrap_button_with_theme(
+                                        Button::new("view-all-transactions")
+                                            .label("查看全部")
+                                            .ghost()
+                                            .xsmall()
+                                            .on_click(cx.listener(move |this, _, _, cx| {
+                                                if let ViewState::Dashboard { account_index } = this.view_state {
+                                                    this.view_state = ViewState::TransactionHistory { account_index };
+                                                    cx.notify();
+                                                }
+                                            })),
+                                        false,
+                                        cx,
+                                    ).into_any_element()
+                                } else {
+                                    div().into_any_element()
+                                },
+                            ),
                     )
                     .child(
                         div()
@@ -2160,7 +2238,7 @@ impl MainWindow {
                                         .flex_col()
                                         .w_full()
                                         .children(
-                                            self.transaction_history.iter().map(|tx| {
+                                            self.transaction_history.iter().take(5).map(|tx| {
                                                 self.render_transaction_item(tx, cx)
                                             }),
                                         )
@@ -2813,6 +2891,787 @@ impl MainWindow {
                             ),
                     ),
             )
+    }
+
+    fn add_test_transactions(&mut self) {
+        // 添加一些测试交易记录
+        let test_transactions = vec![
+            TransactionRecord {
+                signature: solana_sdk::signature::Signature::new_unique(),
+                from: self.accounts.get(0).map(|a| a.pubkey).unwrap_or_default(),
+                to: Some(solana_sdk::pubkey::Pubkey::new_unique()),
+                amount: 1_500_000_000, // 1.5 SOL
+                fee: 5000,
+                status: TransactionStatus::Confirmed,
+                timestamp: chrono::Utc::now() - chrono::Duration::hours(2),
+                memo: Some("测试发送交易".to_string()),
+            },
+            TransactionRecord {
+                signature: solana_sdk::signature::Signature::new_unique(),
+                from: solana_sdk::pubkey::Pubkey::new_unique(),
+                to: Some(self.accounts.get(0).map(|a| a.pubkey).unwrap_or_default()),
+                amount: 3_000_000_000, // 3 SOL
+                fee: 5000,
+                status: TransactionStatus::Confirmed,
+                timestamp: chrono::Utc::now() - chrono::Duration::hours(5),
+                memo: Some("空投接收".to_string()),
+            },
+            TransactionRecord {
+                signature: solana_sdk::signature::Signature::new_unique(),
+                from: self.accounts.get(0).map(|a| a.pubkey).unwrap_or_default(),
+                to: Some(solana_sdk::pubkey::Pubkey::new_unique()),
+                amount: 500_000_000, // 0.5 SOL
+                fee: 5000,
+                status: TransactionStatus::Pending,
+                timestamp: chrono::Utc::now() - chrono::Duration::minutes(10),
+                memo: Some("待确认交易".to_string()),
+            },
+            TransactionRecord {
+                signature: solana_sdk::signature::Signature::new_unique(),
+                from: self.accounts.get(0).map(|a| a.pubkey).unwrap_or_default(),
+                to: Some(solana_sdk::pubkey::Pubkey::new_unique()),
+                amount: 2_000_000_000, // 2 SOL
+                fee: 5000,
+                status: TransactionStatus::Failed("余额不足".to_string()),
+                timestamp: chrono::Utc::now() - chrono::Duration::days(1),
+                memo: Some("失败的交易".to_string()),
+            },
+        ];
+        
+        self.transaction_history.extend(test_transactions);
+    }
+
+    fn create_test_signing_request(&mut self, cx: &mut Context<Self>) {
+        if let ViewState::Dashboard { account_index } = self.view_state {
+            if let Some(account) = self.accounts.get(account_index) {
+                // 创建一个测试交易
+                let from_pubkey = account.pubkey;
+                let to_pubkey = solana_sdk::pubkey::Pubkey::new_unique();
+                let lamports = 1_000_000; // 0.001 SOL
+                
+                // 创建转账指令
+                let instruction = solana_sdk::system_instruction::transfer(&from_pubkey, &to_pubkey, lamports);
+                
+                // 创建交易
+                let message = solana_sdk::message::Message::new_with_blockhash(
+                    &[instruction],
+                    Some(&from_pubkey),
+                    &solana_sdk::hash::Hash::default(),
+                );
+                let transaction = solana_sdk::transaction::Transaction::new_unsigned(message);
+                
+                // 创建签名请求
+                let source = SigningRequestSource::DApp {
+                    name: "测试 DApp".to_string(),
+                    url: "https://example.com".to_string(),
+                    icon: None,
+                };
+                
+                let mut request = SigningRequest::new(
+                    source,
+                    transaction,
+                    Some("这是一个测试签名请求，用于演示签名对话框功能。".to_string()),
+                );
+                
+                // 设置预估费用
+                request = request.with_estimated_fee(5000); // 0.000005 SOL
+                
+                // 添加到管理器
+                let request_id = self.signing_request_manager.add_request(request);
+                
+                // 显示对话框
+                self.current_signing_request = Some(request_id);
+                self.show_signing_request = true;
+                cx.notify();
+            }
+        }
+    }
+
+    fn render_transaction_history_content(
+        &self,
+        account: &WalletAccount,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .p(px(20.0))
+            .gap_4()
+            .child(
+                // 头部
+                div()
+                    .flex()
+                    .w_full()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_2xl()
+                            .text_color(self.theme.text_primary)
+                            .child("交易历史"),
+                    )
+                    .child(
+                        self.wrap_button_with_theme(
+                            Button::new("back-to-dashboard-history")
+                                .label("返回")
+                                .ghost()
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    if let ViewState::TransactionHistory { account_index } = this.view_state {
+                                        this.view_state = ViewState::Dashboard { account_index };
+                                        cx.notify();
+                                    }
+                                })),
+                            false,
+                            cx,
+                        ),
+                    ),
+            )
+            .child(
+                // 过滤和搜索栏
+                div()
+                    .flex()
+                    .w_full()
+                    .gap_3()
+                    .items_center()
+                    .child(
+                        div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                self.wrap_button_with_theme(
+                                    Button::new("filter-all")
+                                        .label("全部")
+                                        .primary()
+                                        .xsmall(),
+                                    true,
+                                    cx,
+                                ),
+                            )
+                            .child(
+                                self.wrap_button_with_theme(
+                                    Button::new("filter-sent")
+                                        .label("发送")
+                                        .ghost()
+                                        .xsmall(),
+                                    false,
+                                    cx,
+                                ),
+                            )
+                            .child(
+                                self.wrap_button_with_theme(
+                                    Button::new("filter-received")
+                                        .label("接收")
+                                        .ghost()
+                                        .xsmall(),
+                                    false,
+                                    cx,
+                                ),
+                            ),
+                    )
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(self.theme.text_secondary)
+                            .child(format!("共 {} 笔交易", self.transaction_history.len())),
+                    ),
+            )
+            .child(
+                // 交易列表
+                div()
+                    .flex()
+                    .flex_col()
+                    .w_full()
+                    .flex_1()
+                    .bg(self.theme.surface)
+                    .rounded(px(8.0))
+                    .border_1()
+                    .border_color(self.theme.border)
+                    .overflow_hidden()
+                    .child(
+                        if self.transaction_history.is_empty() {
+                            div()
+                                .flex()
+                                .w_full()
+                                .h_full()
+                                .items_center()
+                                .justify_center()
+                                .child(
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .items_center()
+                                        .gap_3()
+                                        .child(
+                                            Icon::new(IconName::Inbox)
+                                                .size_12()
+                                                .text_color(self.theme.text_disabled),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_lg()
+                                                .text_color(self.theme.text_disabled)
+                                                .child("暂无交易记录"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_sm()
+                                                .text_color(self.theme.text_disabled)
+                                                .child("您的交易记录将显示在这里"),
+                                        ),
+                                )
+                        } else {
+                            div()
+                                .flex()
+                                .flex_col()
+                                .w_full()
+                                .overflow_hidden()
+                                .child(
+                                    // 表头
+                                    div()
+                                        .flex()
+                                        .w_full()
+                                        .px(px(16.0))
+                                        .py(px(12.0))
+                                        .bg(self.theme.background)
+                                        .border_b_1()
+                                        .border_color(self.theme.border)
+                                        .child(
+                                            div()
+                                                .flex()
+                                                .w_full()
+                                                .items_center()
+                                                .child(
+                                                    div()
+                                                        .w(px(120.0))
+                                                        .text_xs()
+                                                        .text_color(self.theme.text_secondary)
+                                                        .child("类型"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .flex_1()
+                                                        .text_xs()
+                                                        .text_color(self.theme.text_secondary)
+                                                        .child("交易签名"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w(px(150.0))
+                                                        .text_xs()
+                                                        .text_color(self.theme.text_secondary)
+                                                        .text_right()
+                                                        .child("金额"),
+                                                )
+                                                .child(
+                                                    div()
+                                                        .w(px(100.0))
+                                                        .text_xs()
+                                                        .text_color(self.theme.text_secondary)
+                                                        .text_right()
+                                                        .child("状态"),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    // 交易列表
+                                    div()
+                                        .flex()
+                                        .flex_col()
+                                        .w_full()
+                                        .overflow_hidden()
+                                        .children(
+                                            self.transaction_history.iter().map(|tx| {
+                                                self.render_detailed_transaction_item(tx, cx)
+                                            }),
+                                        ),
+                                )
+                        },
+                    ),
+            )
+    }
+
+    fn render_detailed_transaction_item(
+        &self,
+        tx: &TransactionRecord,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let is_sent = self.accounts.iter()
+            .any(|acc| acc.pubkey == tx.from);
+        
+        div()
+            .flex()
+            .w_full()
+            .px(px(16.0))
+            .py(px(12.0))
+            .border_b_1()
+            .border_color(self.theme.border)
+            .hover(|style| style.bg(rgba(0x00000008)))
+            .child(
+                div()
+                    .flex()
+                    .w_full()
+                    .items_center()
+                    .child(
+                        // 类型和时间
+                        div()
+                            .w(px(120.0))
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .flex()
+                                    .items_center()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .size(px(8.0))
+                                            .rounded_full()
+                                            .bg(if is_sent {
+                                                self.theme.error
+                                            } else {
+                                                self.theme.success
+                                            }),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_sm()
+                                            .text_color(self.theme.text_primary)
+                                            .child(if is_sent { "发送" } else { "接收" }),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .text_color(self.theme.text_secondary)
+                                    .child(format!(
+                                        "{}", 
+                                        tx.timestamp.format("%m-%d %H:%M")
+                                    )),
+                            ),
+                    )
+                    .child(
+                        // 交易签名
+                        div()
+                            .flex_1()
+                            .flex()
+                            .items_center()
+                            .gap_2()
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_ellipsis()
+                                    .overflow_hidden()
+                                    .text_color(self.theme.text_secondary)
+                                    .child(format!("{}...{}", 
+                                        &tx.signature.to_string()[..8],
+                                        &tx.signature.to_string()[tx.signature.to_string().len()-8..]
+                                    )),
+                            )
+                            .child(
+                                self.wrap_button_with_theme(
+                                    Button::new("copy-tx")
+                                        .icon(Icon::new(IconName::Copy))
+                                        .ghost()
+                                        .xsmall()
+                                        .on_click(cx.listener(move |_, _, _, cx| {
+                                            // TODO: 复制交易签名
+                                        })),
+                                    false,
+                                    cx,
+                                ),
+                            ),
+                    )
+                    .child(
+                        // 金额
+                        div()
+                            .w(px(150.0))
+                            .text_right()
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(if is_sent {
+                                        self.theme.error
+                                    } else {
+                                        self.theme.success
+                                    })
+                                    .child(format!(
+                                        "{}{:.4} SOL",
+                                        if is_sent { "-" } else { "+" },
+                                        tx.amount_in_sol()
+                                    )),
+                            ),
+                    )
+                    .child(
+                        // 状态
+                        div()
+                            .w(px(100.0))
+                            .flex()
+                            .justify_end()
+                            .child(
+                                match &tx.status {
+                                    TransactionStatus::Confirmed => div()
+                                        .px(px(8.0))
+                                        .py(px(2.0))
+                                        .bg(rgba(0x00ff0019))
+                                        .rounded(px(4.0))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(self.theme.success)
+                                                .child("已确认"),
+                                        ),
+                                    TransactionStatus::Pending => div()
+                                        .px(px(8.0))
+                                        .py(px(2.0))
+                                        .bg(rgba(0xffaa0019))
+                                        .rounded(px(4.0))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(self.theme.warning)
+                                                .child("待确认"),
+                                        ),
+                                    TransactionStatus::Failed(_error) => div()
+                                        .px(px(8.0))
+                                        .py(px(2.0))
+                                        .bg(rgba(0xff000019))
+                                        .rounded(px(4.0))
+                                        .child(
+                                            div()
+                                                .text_xs()
+                                                .text_color(self.theme.error)
+                                                .child("失败"),
+                                        ),
+                                },
+                            ),
+                    ),
+            )
+    }
+
+    fn render_signing_request_dialog(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some(request_id) = &self.current_signing_request {
+            if let Some(request) = self.signing_request_manager.get_request(request_id) {
+                let details = request.get_transaction_details();
+                
+                // 背景遮罩
+                div()
+                    .absolute()
+                    .inset_0()
+                    .bg(rgba(0x00000099))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        // 对话框
+                        div()
+                            .bg(self.theme.surface)
+                            .border_1()
+                            .border_color(self.theme.border)
+                            .rounded_lg()
+                            .shadow_lg()
+                            .w(px(500.0))
+                            .max_h(px(600.0))
+                            .overflow_hidden()
+                            .child(
+                                div()
+                                    .flex()
+                                    .flex_col()
+                                    .size_full()
+                                    // 标题栏
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .px_6()
+                                            .py_4()
+                                            .border_b_1()
+                                            .border_color(self.theme.border)
+                                            .child(
+                                                div()
+                                                    .text_xl()
+                                                    .text_color(self.theme.text_primary)
+                                                    .child("交易签名请求"),
+                                            )
+                                            .child(
+                                                self.wrap_button_with_theme(
+                                                    Button::new("close-signing-request")
+                                                        .icon(IconName::Close)
+                                                        .ghost()
+                                                        .xsmall()
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            this.show_signing_request = false;
+                                                            this.current_signing_request = None;
+                                                            cx.notify();
+                                                        })),
+                                                    false,
+                                                    cx,
+                                                ),
+                                            ),
+                                    )
+                                    // 内容区域
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_4()
+                                            .px_6()
+                                            .py_4()
+                                            .overflow_hidden()
+                                            // 请求来源
+                                            .child(
+                                                match &request.source {
+                                                    SigningRequestSource::DApp { name, url, .. } => {
+                                                        div()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap_2()
+                                                            .child(
+                                                                div()
+                                                                    .text_sm()
+                                                                    .text_color(self.theme.text_secondary)
+                                                                    .child("请求来源"),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .items_center()
+                                                                    .gap_3()
+                                                                    .p_3()
+                                                                    .bg(self.theme.background)
+                                                                    .rounded_md()
+                                                                    .child(
+                                                                        Icon::new(IconName::Globe)
+                                                                            .size_4()
+                                                                            .text_color(self.theme.text_secondary),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .flex()
+                                                                            .flex_col()
+                                                                            .child(
+                                                                                div()
+                                                                                    .text_sm()
+                                                                                    .text_color(self.theme.text_primary)
+                                                                                    .child(name.clone()),
+                                                                            )
+                                                                            .child(
+                                                                                div()
+                                                                                    .text_xs()
+                                                                                    .text_color(self.theme.text_disabled)
+                                                                                    .child(url.clone()),
+                                                                            ),
+                                                                    ),
+                                                            )
+                                                    }
+                                                    SigningRequestSource::Internal { operation } => {
+                                                        div()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap_2()
+                                                            .child(
+                                                                div()
+                                                                    .text_sm()
+                                                                    .text_color(self.theme.text_secondary)
+                                                                    .child("内部操作"),
+                                                            )
+                                                            .child(
+                                                                div()
+                                                                    .text_sm()
+                                                                    .text_color(self.theme.text_primary)
+                                                                    .child(operation.clone()),
+                                                            )
+                                                    }
+                                                },
+                                            )
+                                            // 交易详情
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(self.theme.text_secondary)
+                                                            .child("交易详情"),
+                                                    )
+                                                    .child(
+                                                        div()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap_2()
+                                                            .p_3()
+                                                            .bg(self.theme.background)
+                                                            .rounded_md()
+                                                            // 费用支付者
+                                                            .child(
+                                                                div()
+                                                                    .flex()
+                                                                    .justify_between()
+                                                                    .child(
+                                                                        div()
+                                                                            .text_xs()
+                                                                            .text_color(self.theme.text_disabled)
+                                                                            .child("费用支付者:"),
+                                                                    )
+                                                                    .child(
+                                                                        div()
+                                                                            .text_xs()
+                                                                            .text_color(self.theme.text_primary)
+                                                                            .child(format!("{}...", &details.fee_payer.to_string()[..8])),
+                                                                    ),
+                                                            )
+                                                            // 预估费用
+                                                            .when(request.estimated_fee.is_some(), |d| {
+                                                                d.child(
+                                                                    div()
+                                                                        .flex()
+                                                                        .justify_between()
+                                                                        .child(
+                                                                            div()
+                                                                                .text_xs()
+                                                                                .text_color(self.theme.text_disabled)
+                                                                                .child("预估费用:"),
+                                                                        )
+                                                                        .child(
+                                                                            div()
+                                                                                .text_xs()
+                                                                                .text_color(self.theme.text_primary)
+                                                                                .child(format!(
+                                                                                    "{} SOL",
+                                                                                    request.estimated_fee.unwrap_or(0) as f64 / 1_000_000_000.0
+                                                                                )),
+                                                                        ),
+                                                                )
+                                                            }),
+                                                    ),
+                                            )
+                                            // 指令列表
+                                            .child(
+                                                div()
+                                                    .flex()
+                                                    .flex_col()
+                                                    .gap_2()
+                                                    .child(
+                                                        div()
+                                                            .text_sm()
+                                                            .text_color(self.theme.text_secondary)
+                                                            .child("指令"),
+                                                    )
+                                                    .children(
+                                                        details.instructions.iter().map(|instruction| {
+                                                            div()
+                                                                .flex()
+                                                                .items_center()
+                                                                .gap_2()
+                                                                .p_2()
+                                                                .bg(self.theme.background)
+                                                                .rounded_md()
+                                                                .child(
+                                                                    Icon::new(IconName::Copy)
+                                                                        .size_4()
+                                                                        .text_color(self.theme.text_secondary),
+                                                                )
+                                                                .child(
+                                                                    div()
+                                                                        .text_sm()
+                                                                        .text_color(self.theme.text_primary)
+                                                                        .child(instruction.instruction_type.to_string()),
+                                                                )
+                                                        }),
+                                                    ),
+                                            )
+                                            // 消息
+                                            .when(request.message.is_some(), |d| {
+                                                d.child(
+                                                    div()
+                                                        .flex()
+                                                        .flex_col()
+                                                        .gap_2()
+                                                        .child(
+                                                            div()
+                                                                .text_sm()
+                                                                .text_color(self.theme.text_secondary)
+                                                                .child("消息"),
+                                                        )
+                                                        .child(
+                                                            div()
+                                                                .p_3()
+                                                                .bg(self.theme.background)
+                                                                .rounded_md()
+                                                                .text_sm()
+                                                                .text_color(self.theme.text_primary)
+                                                                .child(request.message.as_ref().unwrap().clone()),
+                                                        ),
+                                                )
+                                            }),
+                                    )
+                                    // 按钮区域
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .justify_end()
+                                            .gap_3()
+                                            .px_6()
+                                            .py_4()
+                                            .border_t_1()
+                                            .border_color(self.theme.border)
+                                            .child(
+                                                self.wrap_button_with_theme(
+                                                    Button::new("reject-signing")
+                                                        .label("拒绝")
+                                                        .ghost()
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            if let Some(request_id) = &this.current_signing_request {
+                                                                let id = request_id.clone();
+                                                                this.signing_request_manager.process_request(&id, false).ok();
+                                                                this.show_signing_request = false;
+                                                                this.current_signing_request = None;
+                                                                cx.notify();
+                                                            }
+                                                        })),
+                                                    false,
+                                                    cx,
+                                                ),
+                                            )
+                                            .child(
+                                                self.wrap_button_with_theme(
+                                                    Button::new("approve-signing")
+                                                        .label("批准")
+                                                        .primary()
+                                                        .on_click(cx.listener(|this, _, _, cx| {
+                                                            if let Some(request_id) = &this.current_signing_request {
+                                                                let id = request_id.clone();
+                                                                // 批准并签名交易
+                                                                if let Some(request) = this.signing_request_manager.get_request_mut(&id) {
+                                                                    request.approve();
+                                                                    // TODO: 实际签名交易
+                                                                    request.mark_signed();
+                                                                }
+                                                                this.signing_request_manager.process_request(&id, true).ok();
+                                                                this.show_signing_request = false;
+                                                                this.current_signing_request = None;
+                                                                cx.notify();
+                                                            }
+                                                        })),
+                                                    true,
+                                                    cx,
+                                                ),
+                                            ),
+                                    ),
+                            ),
+                    )
+            } else {
+                div()
+            }
+        } else {
+            div()
+        }
     }
 }
 
