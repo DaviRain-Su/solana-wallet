@@ -1,5 +1,5 @@
 [package]
-name = "rust_book_online"
+name = "example-code"
 version = "0.1.0"
 edition = "2024"
 
