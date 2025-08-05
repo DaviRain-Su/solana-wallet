@@ -1,62 +1,6 @@
 [package]
-name = "solana-wallet"
+name = "rust_book_online"
 version = "0.1.0"
-edition = "2021"
-authors = ["Davirian"]
-description = "A high-performance desktop Solana wallet built with GPUI"
-license = "MIT"
-rust-version = "1.75"
+edition = "2024"
 
 [dependencies]
-# UI Framework
-gpui = { git = "https://github.com/zed-industries/zed.git" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", branch = "main" }
-
-# Solana - 尝试最新版本
-solana-sdk = "2.0"
-solana-client = "2.0"
-spl-token = "5.0"
-
-# Cryptography
-ed25519-dalek = "2.1"
-bip39 = { version = "2.0", features = ["rand"] }
-bs58 = "0.5"
-rand = "0.8"
-aes-gcm = "0.10"
-argon2 = "0.5"
-zeroize = { version = "1.7", features = ["derive"] }
-
-# Async
-tokio = { version = "1.35", features = ["full"] }
-futures = "0.3"
-
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-
-# Utils
-uuid = { version = "1.6", features = ["v4", "serde"] }
-chrono = { version = "0.4", features = ["serde"] }
-anyhow = "1.0"
-thiserror = "1.0"
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-dirs = "5.0"
-solana-transaction-status = "2.0"
-qrcode = "0.14.1"
-
-[dev-dependencies]
-tempfile = "3.8"
-mockito = "1.2"
-criterion = "0.5"
-
-[profile.release]
-opt-level = 3
-lto = true
-codegen-units = 1
-strip = true
-
-[profile.dev]
-opt-level = 0
-debug = true
-
