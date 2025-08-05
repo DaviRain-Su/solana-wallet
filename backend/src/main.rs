@@ -20,6 +20,7 @@ struct HealthResponse {
 #[derive(Deserialize)]
 struct CodeExecutionRequest {
     code: String,
+    #[allow(dead_code)]
     mode: String,
 }
 
@@ -42,10 +43,24 @@ async fn main() {
         .route("/api/execute", post(execute_code))
         .layer(cors);
 
-    let addr = SocketAddr::from(([127, 0, 0, 1], 3000));
-    info!("Server running on http://{}", addr);
-
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let mut port = 3000;
+    let listener = loop {
+        match tokio::net::TcpListener::bind(SocketAddr::from(([127, 0, 0, 1], port))).await {
+            Ok(listener) => {
+                info!("Server running on http://127.0.0.1:{}", port);
+                break listener;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+                tracing::warn!("Port {} is already in use, trying port {}", port, port + 1);
+                port += 1;
+                if port > 3010 {
+                    panic!("Could not find an available port between 3000-3010");
+                }
+            }
+            Err(e) => panic!("Failed to bind to port: {}", e),
+        }
+    };
+    
     axum::serve(listener, app).await.unwrap();
 }
 

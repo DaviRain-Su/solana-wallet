@@ -2,9 +2,12 @@
 
 echo "Starting Rust Book Online development environment..."
 
+# Get the script directory
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
 # Start backend
 echo "Starting backend server..."
-cd backend && cargo run &
+(cd "$SCRIPT_DIR/backend" && cargo run) &
 BACKEND_PID=$!
 
 # Wait for backend to start
@@ -12,7 +15,7 @@ sleep 5
 
 # Start frontend
 echo "Starting frontend development server..."
-cd ../frontend && npm run dev &
+(cd "$SCRIPT_DIR/frontend" && npm run dev) &
 FRONTEND_PID=$!
 
 echo "Backend running on http://localhost:3000"
