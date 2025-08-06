@@ -1,0 +1,207 @@
+.course-container {
+  display: flex;
+  height: 100vh;
+}
+
+.course-sidebar {
+  width: 300px;
+  background-color: #252526;
+  padding: 1rem;
+  overflow-y: auto;
+  border-right: 1px solid #3e3e42;
+}
+
+.back-link {
+  display: inline-block;
+  color: #4fc3f7;
+  text-decoration: none;
+  margin-bottom: 1rem;
+  font-size: 0.875rem;
+}
+
+.back-link:hover {
+  text-decoration: underline;
+}
+
+.course-sidebar h2 {
+  font-size: 1.25rem;
+  margin-bottom: 1.5rem;
+  color: #ffffff;
+}
+
+.chapter-section {
+  margin-bottom: 2rem;
+}
+
+.chapter-section h3 {
+  font-size: 1rem;
+  color: #cccccc;
+  margin-bottom: 0.5rem;
+  text-transform: uppercase;
+  font-weight: 600;
+}
+
+.chapter-section ul {
+  list-style: none;
+  padding: 0;
+}
+
+.chapter-section li {
+  margin-bottom: 0.25rem;
+}
+
+.chapter-section a {
+  display: block;
+  padding: 0.5rem 0.75rem;
+  color: #969696;
+  text-decoration: none;
+  border-radius: 4px;
+  transition: all 0.2s;
+}
+
+.chapter-section a:hover {
+  background-color: #2a2d2e;
+  color: #ffffff;
+}
+
+.chapter-section a.active {
+  background-color: #094771;
+  color: #ffffff;
+}
+
+.course-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.lesson-content {
+  padding: 2rem;
+  background-color: #1e1e1e;
+  overflow-y: auto;
+  max-height: 300px;
+  border-bottom: 1px solid #3e3e42;
+}
+
+.lesson-content h1 {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+  color: #ffffff;
+}
+
+.lesson-content h2 {
+  font-size: 1.5rem;
+  margin-top: 1.5rem;
+  margin-bottom: 1rem;
+  color: #ffffff;
+}
+
+.lesson-content p {
+  line-height: 1.6;
+  margin-bottom: 1rem;
+  color: #cccccc;
+}
+
+.lesson-content code {
+  background-color: #2d2d30;
+  padding: 0.2rem 0.4rem;
+  border-radius: 3px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  color: #4fc3f7;
+}
+
+.lesson-content ul, .lesson-content ol {
+  margin-bottom: 1rem;
+  padding-left: 2rem;
+  color: #cccccc;
+}
+
+.lesson-content li {
+  margin-bottom: 0.5rem;
+}
+
+.code-section {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  border-bottom: 1px solid #3e3e42;
+}
+
+.hint-box {
+  background-color: #2d4a3d;
+  border: 1px solid #3e5e4e;
+  padding: 1rem;
+  margin: 0 1rem 1rem 1rem;
+  border-radius: 4px;
+  color: #b3d9b3;
+}
+
+.hint-button, .solution-button {
+  background-color: #3e3e42;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  margin-left: 0.5rem;
+  transition: background-color 0.2s;
+}
+
+.hint-button:hover, .solution-button:hover {
+  background-color: #4e4e52;
+}
+
+.navigation-buttons {
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  background-color: #252526;
+  border-top: 1px solid #3e3e42;
+}
+
+.nav-button {
+  background-color: #0e639c;
+  color: white;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  cursor: pointer;
+  transition: background-color 0.2s;
+}
+
+.nav-button:hover {
+  background-color: #1177bb;
+}
+
+.nav-button:disabled {
+  background-color: #3e3e42;
+  cursor: not-allowed;
+}
+
+.course-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  text-align: center;
+}
+
+.course-error h2 {
+  font-size: 2rem;
+  margin-bottom: 1rem;
+  color: #f48771;
+}
+
+.course-error a {
+  color: #4fc3f7;
+  text-decoration: none;
+  font-size: 1.125rem;
+}
+
+.course-error a:hover {
+  text-decoration: underline;
+}

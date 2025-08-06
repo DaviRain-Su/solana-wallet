@@ -1,6 +1,6 @@
-# Rust Book Online
+# Rust & Solana Learning Platform
 
-An interactive online platform for learning Rust programming language.
+An interactive online platform for learning Rust programming language and Solana blockchain development.
 
 ## Architecture
 
@@ -68,8 +68,27 @@ The frontend runs on http://localhost:5173
 
 ## Features
 
-- ✅ Interactive Rust code editor with syntax highlighting
-- ✅ Real-time code execution via Rust Playground API
+- ✅ Interactive code editor with syntax highlighting (Monaco Editor)
+- ✅ Real-time Rust code execution via Rust Playground API
+- ✅ Structured learning paths for Rust and Solana
+- ✅ Course navigation with chapters and lessons
+- ✅ Built-in hints and solutions
 - ✅ Dark theme optimized for coding
-- 🚧 Course content and lessons (coming soon)
-- 🚧 User progress tracking (coming soon)
+- ✅ Responsive design
+- 🚧 User authentication and progress tracking (coming soon)
+- 🚧 More advanced Solana examples (coming soon)
+
+## Courses Available
+
+### 🦀 Rust Programming
+- Getting Started
+  - Hello, World!
+  - Variables and Mutability
+- Ownership
+  - Ownership Basics
+  - Borrowing and References
+
+### ⚡ Solana Development
+- Introduction to Solana
+  - What is Solana
+  - Connecting to the Network
